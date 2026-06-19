@@ -1,0 +1,21 @@
+# Object files
+*.o
+obj/
+
+# Binaries
+bin/
+Obsfuria
+*_test
+
+# Game Design Document
+GDD.md
+
+# Save files
+*.bin
+
+# Testing
+Makefile_Test
+
+*.ps1
+
+**/arsenal.hpp
