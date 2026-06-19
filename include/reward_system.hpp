@@ -6,7 +6,6 @@
 class RewardSystem {
 public:
     static int calculateExp(int enemyLevel);
-    
     /*
      * Interactive stat stealing menu post-combat.
      */
