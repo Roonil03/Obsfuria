@@ -1,8 +1,6 @@
-# Obsfuria (Interactive Edition)
+# Obsfuria
 
-Obsfuria is a hardcore, terminal-based, turn-based roguelike RPG. It heavily relies on Linux terminal aesthetics and C-programming themes for its narrative and "Game Over" states. 
-
-Explore procedurally generated grids, encounter non-alphanumeric entities, and try to survive the simulated penalties.
-
-## Building and Running
-Check the `INSTALL.md` file for details.
+Obsfuria is a terminal-based, turn-based roguelike RPG.
+- Explore procedurally generated grids, encounter non-alphanumeric entities, and try to survive the simulated penalties.
+- Enemies are commands, which execute upon defeating the player (hey, that's you!)
+- Explore through a tiny maze, and steal the stat of the enemy you defeat. **WARNING:** Be careful of the enemies you defeat, since the stats that you steal will affect your player character.
