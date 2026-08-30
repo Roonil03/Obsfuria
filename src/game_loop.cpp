@@ -17,7 +17,6 @@ void GameLoop::start(MenuMain::Difficulty diff) {
     
     if (diff == MenuMain::Difficulty::CONTINUE) {
         if (SaveEngine::loadState(state)) {
-            // Successfully loaded - use saved difficulty and state
         } else {
             diff = MenuMain::Difficulty::EASY;
         }
@@ -29,8 +28,10 @@ void GameLoop::start(MenuMain::Difficulty diff) {
     } else if (diff == MenuMain::Difficulty::HARD) {
         state = {1, 1, 10, 10, 5, 2, 25, Difficulty::HARD};
         SaveEngine::saveState(state);
+    } else if (diff == MenuMain::Difficulty::CHANGE_COMMANDS) {
+        MenuMain::displayChangeCommands();
+        return;
     }
-    // If CONTINUE succeeded, state is already loaded with correct difficulty
     
     std::random_device rd;
     std::mt19937 gen(rd());

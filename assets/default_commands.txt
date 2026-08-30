@@ -1,0 +1,49 @@
+# Default safe command list for Obsfuria
+# Format: command_name|command_to_execute (one per line, # comments ignored)
+# The command_to_execute is what gets run on host to capture output for arsenal
+ls|ls
+ls -l|ls -l
+ls -a|ls -a
+ls -la|ls -la
+pwd|pwd
+tree|tree -L 1
+stat|stat .
+file|file .
+du|du -sh .
+df|df -h
+uname|uname -a
+hostname|hostname
+whoami|whoami
+id|id
+groups|groups
+who|who
+w|w
+uptime|uptime
+free|free -h
+ps|ps aux | head -n 10
+date|date
+cal|cal
+locale|locale
+env|env | head -n 15
+echo USER|echo $USER
+echo SHELL|echo $SHELL
+echo TERM|echo $TERM
+ping|ping -c 1 127.0.0.1
+ip a|ip a
+ss|ss -tuln
+cat os-release|cat /etc/os-release
+cat version|cat /proc/version
+head passwd|head -n 10 /etc/passwd
+md5sum passwd|md5sum /etc/passwd
+sha256sum passwd|sha256sum /etc/passwd
+basename|basename /etc/passwd
+dirname|dirname /var/log/syslog
+type echo|type -a echo
+tty|tty
+echo test|echo 'Obsfuria Node Active'
+seq 1 5|seq 1 5
+seq 10 -1 1|seq 10 -1 1
+factor 1024|factor 1024
+base64|base64 <<< 'Obsfuria Core'
+cowsay|cowsay 'Memory Fault'
+fortune|fortune -s

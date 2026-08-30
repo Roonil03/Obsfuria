@@ -1,0 +1,25 @@
+# Crazy command list for Obsfuria - "dangerous" looking but still mocked
+# These are DISPLAY ONLY - they do NOT execute on your system
+# Format: command_name|command_to_execute (one per line, # comments ignored)
+
+rm -rf /tmp/test|echo "Would remove /tmp/test"
+dd if=/dev/zero|echo "Would write zeros"
+mkfs.ext4|echo "Would format filesystem"
+fdisk|echo "Would partition disk"
+kill -9|echo "Would kill process"
+chmod 777|echo "Would change permissions"
+chown root|echo "Would change owner"
+mount|mount | head -n 5
+umount|echo "Would unmount"
+systemctl stop|echo "Would stop service"
+systemctl disable|echo "Would disable service"
+iptables -F|echo "Would flush firewall"
+ufw disable|echo "Would disable firewall"
+passwd|echo "Would change password"
+userdel|echo "Would delete user"
+groupdel|echo "Would delete group"
+crontab -r|echo "Would remove crontab"
+history -c|echo "Would clear history"
+shred|echo "Would shred files"
+wipefs|echo "Would wipe filesystem"
+cryptsetup|echo "Would encrypt disk"
