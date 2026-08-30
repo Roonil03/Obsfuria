@@ -1,11 +1,16 @@
 # How to Contribute
 
-We welcome contributions to Obsfuria! 
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for full contribution guidelines.
 
-1. Fork the repository.
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`).
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`).
-4. Push to the branch (`git push origin feature/AmazingFeature`).
-5. Open a Pull Request.
+Quick summary:
+1. Fork the repository
+2. Create feature branch: `git checkout -b feature/YourFeature`
+3. Build: `bash ./scripts/add_commands.sh && make`
+4. Test: `make test`
+5. Commit & push
+6. Open Pull Request
 
-Please ensure you follow the strict C-error and non-alphanumeric formatting rules for new enemies.
+**Key rules for new enemies:**
+- Use non-alphanumeric or C-error style names (e.g., "Segmentation Fault")
+- Add to `assets/default_commands.txt` or `assets/crazy_commands.txt` as `name|command`
+- No alphanumeric-only names
