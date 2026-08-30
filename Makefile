@@ -19,17 +19,26 @@ TEST_CPP_OBJS = $(filter-out $(OBJ_DIR)/main.o, $(CPP_OBJS))
 TARGET = $(BIN_DIR)/Obsfuria
 TEST_TARGET0 = $(BIN_DIR)/phase0_test
 TEST_TARGET1 = $(BIN_DIR)/phase1_test
+TEST_TARGET2 = $(BIN_DIR)/phase2_test
+TEST_TARGET3 = $(BIN_DIR)/phase3_test
+TEST_TARGET4 = $(BIN_DIR)/phase4_test
+TEST_TARGET5 = $(BIN_DIR)/phase5_test
+TEST_TARGET6 = $(BIN_DIR)/phase6_test
 
-all: dirs $(TARGET)
+ARSENAL_HPP = include/arsenal.hpp
 
-install: $(TARGET)
-	bash ./scripts/add_commands.sh
+all: dirs $(ARSENAL_HPP) $(TARGET)
+
+install: $(ARSENAL_HPP) $(TARGET)
 	sudo cp $(TARGET) /usr/local/bin/obsfuria
 	sudo chmod +x /usr/local/bin/obsfuria
-	@echo "Installed to ~/.local/bin/obsfuria"
+	@echo "Installed to /usr/local/bin/obsfuria"
 
 dirs:
 	mkdir -p $(OBJ_DIR) $(BIN_DIR)
+
+$(ARSENAL_HPP):
+	bash ./scripts/add_commands.sh
 
 $(TARGET): $(CPP_OBJS) $(ASM_OBJS)
 	$(CXX) $(CXXFLAGS) -o $@ $^
@@ -40,8 +49,31 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.asm
 	$(ASM) $(ASMFLAGS) $< -o $@
 
+$(TEST_TARGET0): $(TEST_DIR)/phase0_test.cpp $(OBJ_DIR)/terminal.o
+	$(CXX) $(CXXFLAGS) -o $@ $^
+
+$(TEST_TARGET1): $(TEST_DIR)/phase1_test.cpp $(ARSENAL_HPP)
+	$(CXX) $(CXXFLAGS) -o $@ $<
+
+$(TEST_TARGET2): $(TEST_DIR)/phase2_test.cpp $(OBJ_DIR)/spatial_manager.o $(ASM_OBJS)
+	$(CXX) $(CXXFLAGS) -o $@ $^
+
+$(TEST_TARGET3): $(TEST_DIR)/phase3_test.cpp $(OBJ_DIR)/sprite_gen.o $(OBJ_DIR)/ui_renderer.o $(OBJ_DIR)/sanitizer.o
+	$(CXX) $(CXXFLAGS) -o $@ $^
+
+$(TEST_TARGET4): $(TEST_DIR)/phase4_test.cpp $(OBJ_DIR)/stat_calc.o $(OBJ_DIR)/reward_system.o $(OBJ_DIR)/terminal.o $(OBJ_DIR)/ui_renderer.o
+	$(CXX) $(CXXFLAGS) -o $@ $^
+
+$(TEST_TARGET5): $(TEST_DIR)/phase5_test.cpp $(OBJ_DIR)/exec_mock.o $(OBJ_DIR)/err_simulate.o $(OBJ_DIR)/terminal.o $(OBJ_DIR)/save_engine.o $(OBJ_DIR)/spatial_manager.o $(ASM_OBJS) $(ARSENAL_HPP)
+	$(CXX) $(CXXFLAGS) -o $@ $^
+
+$(TEST_TARGET6): $(TEST_DIR)/phase6_test.cpp $(OBJ_DIR)/save_engine.o $(OBJ_DIR)/spatial_manager.o $(ASM_OBJS)
+	$(CXX) $(CXXFLAGS) -o $@ $^
+
+test: $(TEST_TARGET0) $(TEST_TARGET1) $(TEST_TARGET2) $(TEST_TARGET3) $(TEST_TARGET4) $(TEST_TARGET5) $(TEST_TARGET6)
+
 clean:
 	rm -rf $(OBJ_DIR)/*.o $(BIN_DIR)/* Obsfuria
 
-.PHONY: all dirs clean
+.PHONY: all dirs clean test install
 
