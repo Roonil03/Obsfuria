@@ -15,6 +15,7 @@ GDD.md
 
 # Testing
 Makefile_Test
+test_corruption*
 
 *.ps1
 
