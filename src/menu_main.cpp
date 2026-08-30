@@ -6,14 +6,16 @@
 #include <iostream>
 #include <vector>
 #include <filesystem>
+#include <fstream>
+#include <unistd.h>
 
 MenuMain::Difficulty MenuMain::displayMenu() {
     bool canContinue = SaveEngine::hasValidSave();
     std::vector<std::string> opts;
     if (canContinue) {
-        opts = {"Continue", "New Game (Easy Mode)", "New Game (Hard Mode)", "Change Command List", "Contribute", "Exit"};
+        opts = {"Continue", "New Game (Easy Mode)", "New Game (Hard Mode)", "Change Command List", "Add More Commands", "Contribute", "Exit"};
     } else {
-        opts = {"Play (Easy Mode)", "Play (Hard Mode)", "Change Command List", "Contribute", "Exit"};
+        opts = {"Play (Easy Mode)", "Play (Hard Mode)", "Change Command List", "Add More Commands", "Contribute", "Exit"};
     }
     
     int selected = 0;
@@ -33,14 +35,16 @@ MenuMain::Difficulty MenuMain::displayMenu() {
                 if (selected == 1) return Difficulty::EASY;
                 if (selected == 2) return Difficulty::HARD;
                 if (selected == 3) { displayChangeCommands(); continue; }
-                if (selected == 4) { displayContribute(); continue; }
-                if (selected == 5) return Difficulty::EXIT;
+                if (selected == 4) { displayAddCommands(); continue; }
+                if (selected == 5) { displayContribute(); continue; }
+                if (selected == 6) return Difficulty::EXIT;
             } else {
                 if (selected == 0) return Difficulty::EASY;
                 if (selected == 1) return Difficulty::HARD;
                 if (selected == 2) { displayChangeCommands(); continue; }
-                if (selected == 3) { displayContribute(); continue; }
-                if (selected == 4) return Difficulty::EXIT;
+                if (selected == 3) { displayAddCommands(); continue; }
+                if (selected == 4) { displayContribute(); continue; }
+                if (selected == 5) return Difficulty::EXIT;
             }
         }
     }
@@ -160,5 +164,118 @@ void MenuMain::displayChangeCommands() {
                 }
             }
         }
+    }
+}
+
+void MenuMain::displayAddCommands() {
+    using namespace std::filesystem;
+    
+    // Load current commands
+    std::vector<CommandEntry> currentCmds;
+    if (exists(CommandConfig::getConfigPath())) {
+        currentCmds = CommandConfig::loadCommands(CommandConfig::getConfigPath());
+    } else {
+        currentCmds = CommandConfig::getDefaultCommands();
+    }
+    
+    Terminal::clearScreen();
+    std::cout << "\x1b[33m=== ADD MORE COMMANDS ===\x1b[0m\r\n";
+    std::cout << "\x1b[31mWARNING: Adding commands will regenerate the arsenal and RESTART the game.\x1b[0m\r\n";
+    std::cout << "\x1b[31mAny unsaved progress will be lost. Continue? (y/N): \x1b[0m";
+    
+    char confirm;
+    std::cin >> confirm;
+    std::cin.ignore(10000, '\n');
+    
+    if (confirm != 'y' && confirm != 'Y') {
+        return;
+    }
+    
+    while (true) {
+        Terminal::clearScreen();
+        std::cout << "\x1b[36m--- ADD COMMAND ---\x1b[0m\r\n";
+        std::cout << "Current commands: " << currentCmds.size() << "\r\n";
+        std::cout << "Format: name|command (e.g., mycmd|echo hello)\r\n";
+        std::cout << "Enter empty name to finish.\r\n\r\n";
+        
+        std::cout << "Command name: ";
+        std::string name;
+        std::getline(std::cin, name);
+        
+        if (name.empty()) {
+            break;
+        }
+        
+        std::cout << "Command to execute: ";
+        std::string cmd;
+        std::getline(std::cin, cmd);
+        
+        if (cmd.empty()) {
+            std::cout << "\x1b[31mCommand cannot be empty.\x1b[0m\r\n";
+            std::cout << "Press any key to continue...\r\n";
+            Terminal::readKey();
+            continue;
+        }
+        
+        // Check for duplicate
+        bool duplicate = false;
+        for (const auto& c : currentCmds) {
+            if (c.name == name) {
+                duplicate = true;
+                break;
+            }
+        }
+        
+        if (duplicate) {
+            std::cout << "\x1b[31mCommand name already exists.\x1b[0m\r\n";
+            std::cout << "Press any key to continue...\r\n";
+            Terminal::readKey();
+            continue;
+        }
+        
+        currentCmds.push_back({name, cmd});
+        std::cout << "\x1b[32mAdded: " << name << " | " << cmd << "\x1b[0m\r\n";
+        std::cout << "Press any key to continue...\r\n";
+        Terminal::readKey();
+    }
+    
+    if (currentCmds.empty()) {
+        Terminal::clearScreen();
+        std::cout << "\x1b[31mNo commands to save.\x1b[0m\r\n";
+        std::cout << "Press any key to return...\r\n";
+        Terminal::readKey();
+        return;
+    }
+    
+    // Save and regenerate
+    if (CommandConfig::saveCommands(CommandConfig::getConfigPath(), currentCmds)) {
+        CommandConfig::regenerateArsenal(currentCmds);
+        
+        Terminal::clearScreen();
+        std::cout << "\x1b[32mCommands saved! Arsenal regenerated with " << currentCmds.size() << " commands.\x1b[0m\r\n";
+        std::cout << "\x1b[33mRestarting game...\x1b[0m\r\n";
+        
+        // Restart the game by exec'ing the binary
+        Terminal::disableRawMode();
+        
+        // Get the binary path
+        char exePath[1024];
+        ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
+        if (len != -1) {
+            exePath[len] = '\0';
+            execl(exePath, exePath, (char*)nullptr);
+        } else {
+            // Fallback
+            execl("./bin/Obsfuria", "./bin/Obsfuria", (char*)nullptr);
+        }
+        
+        // If exec fails
+        std::cerr << "Failed to restart game. Please run manually.\r\n";
+        std::exit(1);
+    } else {
+        Terminal::clearScreen();
+        std::cout << "\x1b[31mFailed to save commands.\x1b[0m\r\n";
+        std::cout << "Press any key to return...\r\n";
+        Terminal::readKey();
     }
 }

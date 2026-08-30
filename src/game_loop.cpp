@@ -31,6 +31,9 @@ void GameLoop::start(MenuMain::Difficulty diff) {
     } else if (diff == MenuMain::Difficulty::CHANGE_COMMANDS) {
         MenuMain::displayChangeCommands();
         return;
+    } else if (diff == MenuMain::Difficulty::ADD_COMMANDS) {
+        MenuMain::displayAddCommands();
+        return;
     }
     
     std::random_device rd;
