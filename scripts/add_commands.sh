@@ -5,12 +5,21 @@ OUT_FILE="$OUT_DIR/arsenal.hpp"
 
 mkdir -p "$OUT_DIR"
 
-# Source config file if provided, otherwise use default asset
-CONFIG_FILE="${1:-assets/default_commands.txt}"
+# Determine config file: user config > custom arg > default asset
+USER_CONFIG="$HOME/.config/obsfuria/commands.conf"
+CONFIG_FILE="${1:-}"
 
-if [[ ! -f "$CONFIG_FILE" ]]; then
-    echo "Config file $CONFIG_FILE not found, using built-in defaults"
+if [[ -f "$USER_CONFIG" ]]; then
+    CONFIG_FILE="$USER_CONFIG"
+    echo "Using user config: $CONFIG_FILE"
+elif [[ -f "$CONFIG_FILE" ]]; then
+    echo "Using provided config: $CONFIG_FILE"
+elif [[ -f "assets/default_commands.txt" ]]; then
     CONFIG_FILE="assets/default_commands.txt"
+    echo "Using default asset: $CONFIG_FILE"
+else
+    echo "No config file found!"
+    exit 1
 fi
 
 echo "Generating Obsfuria Arsenal from $CONFIG_FILE..."

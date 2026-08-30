@@ -29,7 +29,9 @@ ARSENAL_HPP = include/arsenal.hpp
 
 all: dirs $(ARSENAL_HPP) $(TARGET)
 
-install: $(ARSENAL_HPP) $(TARGET)
+install: dirs
+	bash ./scripts/add_commands.sh
+	$(MAKE) $(TARGET)
 	sudo cp $(TARGET) /usr/local/bin/obsfuria
 	sudo chmod +x /usr/local/bin/obsfuria
 	@echo "Installed to /usr/local/bin/obsfuria"
