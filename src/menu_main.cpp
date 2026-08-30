@@ -6,7 +6,7 @@
 #include <vector>
 
 MenuMain::Difficulty MenuMain::displayMenu() {
-    bool canContinue = SaveEngine::hasValidSave("save.bin");
+    bool canContinue = SaveEngine::hasValidSave();
     std::vector<std::string> opts;
     if (canContinue) {
         opts = {"Continue", "New Game (Easy Mode)", "New Game (Hard Mode)", "Contribute", "Exit"};
