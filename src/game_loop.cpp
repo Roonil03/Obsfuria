@@ -16,7 +16,9 @@ void GameLoop::start(MenuMain::Difficulty diff) {
     GameState state;
     
     if (diff == MenuMain::Difficulty::CONTINUE) {
-        if (!SaveEngine::loadState(state)) {
+        if (SaveEngine::loadState(state)) {
+            // Successfully loaded - use saved difficulty and state
+        } else {
             diff = MenuMain::Difficulty::EASY;
         }
     }
@@ -28,6 +30,7 @@ void GameLoop::start(MenuMain::Difficulty diff) {
         state = {1, 1, 10, 10, 5, 2, 25, Difficulty::HARD};
         SaveEngine::saveState(state);
     }
+    // If CONTINUE succeeded, state is already loaded with correct difficulty
     
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -101,7 +104,7 @@ void GameLoop::start(MenuMain::Difficulty diff) {
                 
                 if (survived) {
                     if (enemy.hp <= 0) {
-                        RewardSystem::stealStat(player, enemy);
+                        RewardSystem::stealStat(player, enemy, state.difficulty);
                     } else {
                         Terminal::clearScreen();
                         std::cout << "\x1b[33mYou successfully escaped!\x1b[0m\r\n";
