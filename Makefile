@@ -29,11 +29,10 @@ ARSENAL_HPP = include/arsenal.hpp
 
 all: dirs $(ARSENAL_HPP) $(TARGET)
 
-install: dirs
-	bash ./scripts/add_commands.sh
-	$(MAKE) $(TARGET)
-	sudo cp $(TARGET) /usr/local/bin/obsfuria
-	sudo chmod +x /usr/local/bin/obsfuria
+install: all
+	rm -f /usr/local/bin/obsfuria
+	cp $(TARGET) /usr/local/bin/obsfuria
+	chmod +x /usr/local/bin/obsfuria
 	@echo "Installed to /usr/local/bin/obsfuria"
 
 dirs:
@@ -74,8 +73,12 @@ $(TEST_TARGET6): $(TEST_DIR)/phase6_test.cpp $(OBJ_DIR)/save_engine.o $(OBJ_DIR)
 
 test: $(TEST_TARGET0) $(TEST_TARGET1) $(TEST_TARGET2) $(TEST_TARGET3) $(TEST_TARGET4) $(TEST_TARGET5) $(TEST_TARGET6)
 
-clean:
-	rm -rf $(OBJ_DIR)/*.o $(BIN_DIR)/* Obsfuria
+uninstall:
+	rm -f /usr/local/bin/obsfuria
+	@echo "Uninstalled from /usr/local/bin/obsfuria"
 
-.PHONY: all dirs clean test install
+clean:
+	rm -f $(OBJ_DIR)/*.o $(BIN_DIR)/* Obsfuria
+
+.PHONY: all dirs clean test install uninstall
 
