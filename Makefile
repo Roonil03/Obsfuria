@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS = -Wall -Wextra -std=c++17 -Iinclude
+CXXFLAGS = -Wall -Wextra -std=c++17 -Iinclude -MMD -MP
 ASM = nasm
 ASMFLAGS = -f elf64
 
@@ -33,6 +33,8 @@ install: all
 	rm -f /usr/local/bin/obsfuria
 	cp $(TARGET) /usr/local/bin/obsfuria
 	chmod +x /usr/local/bin/obsfuria
+	@if [ -n "$${SUDO_USER}" ]; then rm -f /home/$${SUDO_USER}/.local/bin/obsfuria; fi
+	@rm -f $${HOME}/.local/bin/obsfuria
 	@echo "Installed to /usr/local/bin/obsfuria"
 
 dirs:
@@ -78,7 +80,8 @@ uninstall:
 	@echo "Uninstalled from /usr/local/bin/obsfuria"
 
 clean:
-	rm -f $(OBJ_DIR)/*.o $(BIN_DIR)/* Obsfuria
+	rm -f $(OBJ_DIR)/*.o $(OBJ_DIR)/*.d $(BIN_DIR)/* Obsfuria
 
 .PHONY: all dirs clean test install uninstall
 
+-include $(CPP_OBJS:.o=.d)
