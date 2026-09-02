@@ -15,7 +15,12 @@ GDD.md
 
 # Testing
 Makefile_Test
+test_corruption*
+tests/
 
 *.ps1
 
 **/arsenal.hpp
+
+# Local agent instructions
+AGENTS.md
