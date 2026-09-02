@@ -8,5 +8,4 @@ Obsfuria is a terminal-based, turn-based roguelike RPG.
 
 ## Documentation:
 - For [installation, please check here!](./INSTALL.md)
-- For helping out with the game, [check out here!](./Contribute.md)
-
+- For helping out with the game, [check out here!](./CONTRIBUTING.md)
