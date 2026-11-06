@@ -16,7 +16,8 @@ GDD.md
 # Testing
 Makefile_Test
 test_corruption*
-tests/
+/tests/*
+!/tests/*.cpp
 
 *.ps1
 
