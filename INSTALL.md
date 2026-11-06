@@ -23,6 +23,12 @@ sudo make install                       # Installs to /usr/local/bin/obsfuria
 obsfuria                                # Run from anywhere
 ```
 
+`make install` also installs the Safe and Crazy command lists under
+`/usr/local/share/obsfuria/assets`. The executable locates these relative to
+its own installation path, so both lists remain available when launched from
+another working directory. Set `PREFIX` to choose an alternate install
+prefix; package staging can use `DESTDIR`.
+
 ## Command Arsenal Configuration
 The game's enemy command list is configurable:
 - **Safe List** (default): `assets/default_commands.txt` - informational command entries

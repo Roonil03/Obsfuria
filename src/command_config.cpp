@@ -7,10 +7,36 @@
 #include <cstdlib>
 #include <filesystem>
 #include <algorithm>
+#include <array>
+#include <unistd.h>
 
 namespace fs = std::filesystem;
 
 namespace {
+fs::path resolveAsset(const char* filename) {
+    const fs::path relative = fs::path("assets") / filename;
+    std::error_code ec;
+    if (fs::is_regular_file(relative, ec)) return relative;
+
+    // Resolve assets beside the executable for relocatable installs and builds
+    // launched from another working directory.
+    std::array<char, 4096> executable{};
+    const ssize_t length = readlink("/proc/self/exe", executable.data(), executable.size() - 1);
+    if (length > 0) {
+        const fs::path binDir = fs::path(std::string(executable.data(), static_cast<size_t>(length))).parent_path();
+        const std::array<fs::path, 3> candidates = {
+            binDir / relative,
+            binDir / ".." / relative,
+            binDir / ".." / "share" / "obsfuria" / relative
+        };
+        for (const auto& candidate : candidates) {
+            ec.clear();
+            if (fs::is_regular_file(candidate, ec)) return candidate;
+        }
+    }
+    return relative;
+}
+
 std::string rawStringLiteral(const std::string& value) {
     std::string delimiter = "obsfuria";
     for (unsigned int suffix = 0;
@@ -35,11 +61,11 @@ fs::path CommandConfig::getConfigPath() {
 }
 
 fs::path CommandConfig::getDefaultAssetPath() {
-    return "assets/default_commands.txt";
+    return resolveAsset("default_commands.txt");
 }
 
 fs::path CommandConfig::getCrazyAssetPath() {
-    return "assets/crazy_commands.txt";
+    return resolveAsset("crazy_commands.txt");
 }
 
 std::vector<CommandEntry> CommandConfig::loadCommands(const fs::path& path) {
