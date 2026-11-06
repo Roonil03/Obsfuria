@@ -6,24 +6,63 @@
 #include <iostream>
 #include <vector>
 #include <filesystem>
-#include <fstream>
-#include <unistd.h>
+#include <iomanip>
+#include <sstream>
 
-static std::string readLine() {
-    Terminal::disableRawMode();
-    std::string value;
-    std::getline(std::cin, value);
-    Terminal::enableRawMode();
-    return value;
+static bool readLineOrEscape(std::string& value, bool escapeCancels = true) {
+    value.clear();
+    while (true) {
+        const int key = Terminal::readKey();
+        if (key == Terminal::ESC) {
+            if (escapeCancels) return false;
+            continue;
+        }
+        if (key == Terminal::ENTER || key == '\n') {
+            std::cout << "\r\n";
+            return true;
+        }
+        if (key == 8 || key == 127) {
+            if (!value.empty()) {
+                value.pop_back();
+                std::cout << "\b \b";
+            }
+            continue;
+        }
+        if (key >= 32 && key <= 255) {
+            value.push_back(static_cast<char>(key));
+            std::cout << static_cast<char>(key);
+        }
+    }
+}
+
+static std::string clickableUserListPath() {
+    namespace fs = std::filesystem;
+    const fs::path absolute = fs::absolute(CommandConfig::getUserListPath()).lexically_normal();
+    const fs::path relative = absolute.lexically_relative(fs::current_path());
+    const std::string label = (relative.empty() ? absolute : relative).string();
+
+    std::ostringstream uri;
+    uri << "file://";
+    for (unsigned char ch : absolute.string()) {
+        if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+            (ch >= '0' && ch <= '9') || ch == '/' || ch == '-' || ch == '_' ||
+            ch == '.' || ch == '~') {
+            uri << static_cast<char>(ch);
+        } else {
+            uri << '%' << std::uppercase << std::hex << std::setw(2)
+                << std::setfill('0') << static_cast<int>(ch) << std::nouppercase << std::dec;
+        }
+    }
+    return "\x1b]8;;" + uri.str() + "\x1b\\" + label + "\x1b]8;;\x1b\\";
 }
 
 MenuMain::Difficulty MenuMain::displayMenu() {
     bool canContinue = SaveEngine::hasValidSave();
     std::vector<std::string> opts;
     if (canContinue) {
-        opts = {"Continue", "New Game (Easy Mode)", "New Game (Hard Mode)", "Change Command List", "Add More Commands", "Contribute", "Exit"};
+        opts = {"Continue", "New Game (Easy Mode)", "New Game (Hard Mode)", "Reload Enemy Commands", "Add More Commands", "Contribute", "Exit"};
     } else {
-        opts = {"Play (Easy Mode)", "Play (Hard Mode)", "Change Command List", "Add More Commands", "Contribute", "Exit"};
+        opts = {"Play (Easy Mode)", "Play (Hard Mode)", "Reload Enemy Commands", "Add More Commands", "Contribute", "Exit"};
     }
     
     int selected = 0;
@@ -72,25 +111,24 @@ void MenuMain::displayChangeCommands() {
     while (true) {
         Terminal::clearScreen();
         std::vector<std::string> opts = {
-            "Use Safe List (default)",
-            "Use Crazy List",
-            "Import Custom File",
-            "Edit Current List",
-            "Reset to Default",
+            "Safe List",
+            "User List",
+            "Import into User List",
+            "Edit User List",
+            "Reset User List to Safe List",
             "Back"
         };
         int selected = 0;
         
         while (true) {
             Terminal::clearScreen();
-            std::cout << "\x1b[36m--- CHANGE COMMAND LIST ---\x1b[0m\r\n";
-            std::cout << "Current config: " << CommandConfig::getConfigPath() << "\r\n";
-            if (exists(CommandConfig::getConfigPath())) {
-                auto cmds = CommandConfig::loadCommands(CommandConfig::getConfigPath());
-                std::cout << "Commands loaded: " << cmds.size() << "\r\n";
-            } else {
-                std::cout << "Using built-in defaults (" << CommandConfig::getDefaultCommands().size() << " commands)\r\n";
-            }
+            std::cout << "\x1b[36m--- RELOAD ENEMY COMMANDS ---\x1b[0m\r\n";
+            std::cout << "Active list: "
+                      << (CommandConfig::getActiveList() == CommandConfig::List::SAFE ? "Safe List" : "User List")
+                      << "\r\n";
+            std::cout << "Editable user list: " << clickableUserListPath() << "\r\n";
+            const auto userCommands = CommandConfig::loadCommands(CommandConfig::getUserListPath());
+            std::cout << "User commands: " << userCommands.size() << "\r\n\r\n";
             std::cout << "\r\n";
             UIRenderer::renderMenu("COMMAND LIST OPTIONS", opts, selected);
             
@@ -99,61 +137,55 @@ void MenuMain::displayChangeCommands() {
                 selected = (selected - 1 + opts.size()) % opts.size();
             } else if (key == Terminal::ARROW_DOWN) {
                 selected = (selected + 1) % opts.size();
+            } else if (key == Terminal::ESC) {
+                return;
             } else if (key == Terminal::ENTER) {
                 if (selected == 0) { // Safe List
                     auto cmds = CommandConfig::getDefaultCommands();
                     if (cmds.empty()) {
                         Terminal::clearScreen();
                         std::cout << "\x1b[31mSafe list is empty; configuration was not changed.\x1b[0m\r\n";
-                    } else if (CommandConfig::saveCommands(CommandConfig::getConfigPath(), cmds)) {
-                        const bool regenerated = CommandConfig::regenerateArsenal(cmds);
+                    } else if (CommandConfig::setActiveList(CommandConfig::List::SAFE)) {
                         Terminal::clearScreen();
-                        std::cout << (regenerated ? "\x1b[32mSafe list applied and arsenal regenerated!\x1b[0m\r\n"
-                                                 : "\x1b[31mSafe list saved, but arsenal regeneration failed.\x1b[0m\r\n");
+                        std::cout << "\x1b[32mSafe List selected. It will be used in the next game.\x1b[0m\r\n";
                     } else {
                         Terminal::clearScreen();
-                        std::cout << "\x1b[31mFailed to apply safe list.\x1b[0m\r\n";
+                        std::cout << "\x1b[31mFailed to select Safe List.\x1b[0m\r\n";
                     }
                     std::cout << "Press any key to continue...\r\n";
                     Terminal::readKey();
-                    break;
-                } else if (selected == 1) { // Crazy List
-                    auto cmds = CommandConfig::getCrazyCommands();
+                    return;
+                } else if (selected == 1) { // User List
+                    const auto cmds = CommandConfig::loadCommands(CommandConfig::getUserListPath());
                     if (cmds.empty()) {
                         Terminal::clearScreen();
-                        std::cout << "\x1b[31mCrazy list is empty; configuration was not changed.\x1b[0m\r\n";
-                    } else if (CommandConfig::saveCommands(CommandConfig::getConfigPath(), cmds)) {
-                        const bool regenerated = CommandConfig::regenerateArsenal(cmds);
+                        std::cout << "\x1b[31mUser List is empty; add or import commands before selecting it.\x1b[0m\r\n";
+                        std::cout << "Editable user list: " << clickableUserListPath() << "\r\n";
+                        std::cout << "Press any key to continue...\r\n";
+                        Terminal::readKey();
+                        break;
+                    } else if (CommandConfig::setActiveList(CommandConfig::List::USER)) {
                         Terminal::clearScreen();
-                        if (regenerated) {
-                            std::cout << "\x1b[33mCrazy list applied and arsenal regenerated!\x1b[0m\r\n";
-                            std::cout << "\x1b[33mCommands run while capturing output; encounters display the captured result.\x1b[0m\r\n";
-                        } else {
-                            std::cout << "\x1b[31mCrazy list saved, but arsenal regeneration failed.\x1b[0m\r\n";
-                        }
+                        std::cout << "\x1b[32mUser List selected. It will be used in the next game.\x1b[0m\r\n";
                     } else {
                         Terminal::clearScreen();
-                        std::cout << "\x1b[31mFailed to apply crazy list.\x1b[0m\r\n";
+                        std::cout << "\x1b[31mFailed to select User List.\x1b[0m\r\n";
                     }
                     std::cout << "Press any key to continue...\r\n";
                     Terminal::readKey();
-                    break;
+                    return;
                 } else if (selected == 2) { // Import Custom File
                     Terminal::clearScreen();
                     std::cout << "Enter path to custom command file (format: name|command per line):\r\n";
                     std::cout << "> ";
                     std::string path;
-                    path = readLine();
+                    if (!readLineOrEscape(path)) break;
                     if (!path.empty()) {
                         auto cmds = CommandConfig::loadCommands(path);
                         if (!cmds.empty()) {
-                            if (CommandConfig::saveCommands(CommandConfig::getConfigPath(), cmds)) {
+                            if (CommandConfig::saveCommands(CommandConfig::getUserListPath(), cmds)) {
                                 Terminal::clearScreen();
-                                if (CommandConfig::regenerateArsenal(cmds)) {
-                                    std::cout << "\x1b[32mCustom list imported (" << cmds.size() << " commands)!\x1b[0m\r\n";
-                                } else {
-                                    std::cout << "\x1b[31mCustom list saved, but arsenal regeneration failed.\x1b[0m\r\n";
-                                }
+                                std::cout << "\x1b[32mImported " << cmds.size() << " commands into the User List.\x1b[0m\r\n";
                             } else {
                                 Terminal::clearScreen();
                                 std::cout << "\x1b[31mFailed to save custom list.\x1b[0m\r\n";
@@ -168,13 +200,14 @@ void MenuMain::displayChangeCommands() {
                     break;
                 } else if (selected == 3) { // Edit Current List
                     std::vector<CommandEntry> cmds;
-                    if (exists(CommandConfig::getConfigPath())) {
-                        cmds = CommandConfig::loadCommands(CommandConfig::getConfigPath());
+                    if (exists(CommandConfig::getUserListPath())) {
+                        cmds = CommandConfig::loadCommands(CommandConfig::getUserListPath());
                     } else {
                         cmds = CommandConfig::getDefaultCommands();
                     }
 
                     bool changed = false;
+                    bool canceled = false;
                     while (true) {
                         Terminal::clearScreen();
                         std::cout << "--- EDIT CURRENT COMMAND LIST ---\r\n";
@@ -183,7 +216,11 @@ void MenuMain::displayChangeCommands() {
                                       << cmds[i].executeCmd << "\r\n";
                         }
                         std::cout << "\r\nEnter a command number to edit, or 0 to finish: ";
-                        const std::string choice = readLine();
+                        std::string choice;
+                        if (!readLineOrEscape(choice)) {
+                            canceled = true;
+                            break;
+                        }
                         if (choice == "0" || choice.empty()) break;
 
                         std::size_t index = 0;
@@ -201,9 +238,17 @@ void MenuMain::displayChangeCommands() {
                         }
 
                         std::cout << "New name: ";
-                        const std::string name = readLine();
+                        std::string name;
+                        if (!readLineOrEscape(name)) {
+                            canceled = true;
+                            break;
+                        }
                         std::cout << "New command: ";
-                        const std::string command = readLine();
+                        std::string command;
+                        if (!readLineOrEscape(command)) {
+                            canceled = true;
+                            break;
+                        }
                         if (name.empty() || command.empty()) {
                             std::cout << "Name and command must both be nonempty. Press any key...\r\n";
                             Terminal::readKey();
@@ -224,14 +269,13 @@ void MenuMain::displayChangeCommands() {
                         Terminal::readKey();
                     }
 
+                    if (canceled) break;
+
                     if (changed) {
-                        const bool saved = CommandConfig::saveCommands(CommandConfig::getConfigPath(), cmds);
-                        const bool regenerated = saved && CommandConfig::regenerateArsenal(cmds);
+                        const bool saved = CommandConfig::saveCommands(CommandConfig::getUserListPath(), cmds);
                         Terminal::clearScreen();
-                        if (regenerated) {
-                            std::cout << "\x1b[32mCommand list saved and arsenal regenerated.\x1b[0m\r\n";
-                        } else if (saved) {
-                            std::cout << "\x1b[31mCommand list saved, but arsenal regeneration failed.\x1b[0m\r\n";
+                        if (saved) {
+                            std::cout << "\x1b[32mUser List saved. It will be used when selected.\x1b[0m\r\n";
                         } else {
                             std::cout << "\x1b[31mFailed to save command list; changes were not persisted.\x1b[0m\r\n";
                         }
@@ -243,14 +287,11 @@ void MenuMain::displayChangeCommands() {
                     auto cmds = CommandConfig::getDefaultCommands();
                     Terminal::clearScreen();
                     if (cmds.empty()) {
-                        std::cout << "\x1b[31mDefault command list is empty; configuration was not changed.\x1b[0m\r\n";
-                    } else if (!CommandConfig::regenerateArsenal(cmds)) {
-                        std::cout << "\x1b[31mFailed to regenerate default arsenal; configuration was not reset.\x1b[0m\r\n";
-                    } else if (std::remove(CommandConfig::getConfigPath().c_str()) == 0 ||
-                               !exists(CommandConfig::getConfigPath())) {
-                        std::cout << "\x1b[32mReset to default command list!\x1b[0m\r\n";
+                        std::cout << "\x1b[31mSafe List is empty; User List was not changed.\x1b[0m\r\n";
+                    } else if (CommandConfig::saveCommands(CommandConfig::getUserListPath(), cmds)) {
+                        std::cout << "\x1b[32mUser List reset to the Safe List contents.\x1b[0m\r\n";
                     } else {
-                        std::cout << "\x1b[31mDefault arsenal regenerated, but failed to remove saved configuration.\x1b[0m\r\n";
+                        std::cout << "\x1b[31mFailed to reset the User List.\x1b[0m\r\n";
                     }
                     std::cout << "Press any key to continue...\r\n";
                     Terminal::readKey();
@@ -268,8 +309,8 @@ void MenuMain::displayAddCommands() {
     
     // Load current commands
     std::vector<CommandEntry> currentCmds;
-    if (exists(CommandConfig::getConfigPath())) {
-        currentCmds = CommandConfig::loadCommands(CommandConfig::getConfigPath());
+    if (exists(CommandConfig::getUserListPath())) {
+        currentCmds = CommandConfig::loadCommands(CommandConfig::getUserListPath());
     } else {
         currentCmds = CommandConfig::getDefaultCommands();
     }
@@ -277,9 +318,11 @@ void MenuMain::displayAddCommands() {
     Terminal::clearScreen();
     std::cout << "\x1b[33m=== ADD MORE COMMANDS ===\x1b[0m\r\n";
     std::cout << "\x1b[33mNew commands will be available when you start a game.\x1b[0m\r\n";
+    std::cout << "Editable user list: " << clickableUserListPath() << "\r\n";
     std::cout << "Continue? (y/N): ";
     
-    std::string answer = readLine();
+    std::string answer;
+    readLineOrEscape(answer, false);
     char confirm = answer.empty() ? 'n' : answer.front();
     
     if (confirm != 'y' && confirm != 'Y') {
@@ -295,7 +338,7 @@ void MenuMain::displayAddCommands() {
         
         std::cout << "Command name: ";
         std::string name;
-        name = readLine();
+        readLineOrEscape(name, false);
         
         if (name.empty()) {
             break;
@@ -303,7 +346,7 @@ void MenuMain::displayAddCommands() {
         
         std::cout << "Command to execute: ";
         std::string cmd;
-        cmd = readLine();
+        readLineOrEscape(cmd, false);
         
         if (cmd.empty()) {
             std::cout << "\x1b[31mCommand cannot be empty.\x1b[0m\r\n";
@@ -342,14 +385,10 @@ void MenuMain::displayAddCommands() {
         return;
     }
     
-    // Save and regenerate
-    if (CommandConfig::saveCommands(CommandConfig::getConfigPath(), currentCmds)) {
+    // Save the user list; choosing it as active is a separate menu action.
+    if (CommandConfig::saveCommands(CommandConfig::getUserListPath(), currentCmds)) {
         Terminal::clearScreen();
-        if (CommandConfig::regenerateArsenal(currentCmds)) {
-            std::cout << "\x1b[32mSaved " << currentCmds.size() << " commands.\x1b[0m\r\n";
-        } else {
-            std::cout << "\x1b[31mCommands saved, but arsenal regeneration failed.\x1b[0m\r\n";
-        }
+        std::cout << "\x1b[32mSaved " << currentCmds.size() << " commands to the User List.\x1b[0m\r\n";
         std::cout << "Press any key to return...\r\n";
         Terminal::readKey();
     } else {

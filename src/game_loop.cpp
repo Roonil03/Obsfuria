@@ -40,10 +40,11 @@ void GameLoop::start(MenuMain::Difficulty diff) {
     
     std::random_device rd;
     std::mt19937 gen(rd());
-    // The command menu writes a runtime config. Use that list immediately, and
-    // retain the compiled list as a fallback for fresh installs or bad configs.
+    // Resolve the selected list for every game start so edits made between
+    // runs are picked up. The compiled arsenal remains a fallback for a
+    // missing or empty user list.
     auto commands = Arsenal::getMockCommands();
-    const auto configuredCommands = CommandConfig::loadCommands(CommandConfig::getConfigPath());
+    const auto configuredCommands = CommandConfig::loadActiveCommands();
     if (!configuredCommands.empty()) {
         // Capture the configured commands' output for encounters, matching
         // the compiled mock arsenal's name -> captured output shape.
