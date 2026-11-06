@@ -3,12 +3,18 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <vector>
+#include <unistd.h>
 
 int main() {
     std::cout << "--- STARTING PHASE 6 TEST ---" << std::endl;
 
-    const std::filesystem::path dataHome = "/tmp/obsfuria-phase6-test-data";
-    std::filesystem::remove_all(dataHome);
+    std::string pattern = (std::filesystem::temp_directory_path() / "obsfuria-phase6-XXXXXX").string();
+    std::vector<char> writable(pattern.begin(), pattern.end());
+    writable.push_back('\0');
+    char* dataDir = mkdtemp(writable.data());
+    assert(dataDir != nullptr);
+    const std::filesystem::path dataHome = dataDir;
     assert(setenv("XDG_DATA_HOME", dataHome.c_str(), 1) == 0);
 
     GameState originalState{5, 5, 10, 10, 10, 5, 50};
