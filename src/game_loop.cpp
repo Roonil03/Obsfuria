@@ -7,9 +7,11 @@
 #include "menu_pause.hpp"
 #include "stat_calc.hpp"
 #include "arsenal.hpp"
+#include "command_config.hpp"
 #include "reward_system.hpp"
 #include <iostream>
 #include <string>
+#include <cstddef>
 #include <random>
 
 void GameLoop::start(MenuMain::Difficulty diff) {
@@ -38,7 +40,16 @@ void GameLoop::start(MenuMain::Difficulty diff) {
     
     std::random_device rd;
     std::mt19937 gen(rd());
+    // The command menu writes a runtime config. Use that list immediately, and
+    // retain the compiled list as a fallback for fresh installs or bad configs.
     auto commands = Arsenal::getMockCommands();
+    const auto configuredCommands = CommandConfig::loadCommands(CommandConfig::getConfigPath());
+    if (!configuredCommands.empty()) {
+        commands.clear();
+        for (const auto& command : configuredCommands) {
+            commands[command.name] = command.executeCmd;
+        }
+    }
     
     while (true) {
         Terminal::clearScreen();
@@ -94,12 +105,15 @@ void GameLoop::start(MenuMain::Difficulty diff) {
                 int enemyDef = StatCalc::generateStat(static_cast<int>((1 + (distance / 15)) * diffMult), 0, 999);
                 int enemyRun = StatCalc::generateStat(static_cast<int>((20 + (distance / 5)) * diffMult), 1, 99);
                 
-                std::uniform_int_distribution<> dist(0, commands.size() - 1);
-                auto it = commands.begin();
-                std::advance(it, dist(gen));
-                std::string enemyName = it->first;
-                
-                if (dist(gen) % 10 == 0) enemyName = "Segmentation Fault";
+                std::string enemyName = "Unknown Command";
+                if (!commands.empty()) {
+                    std::uniform_int_distribution<size_t> dist(0, commands.size() - 1);
+                    auto it = commands.begin();
+                    std::advance(it, dist(gen));
+                    enemyName = it->first;
+                }
+                std::uniform_int_distribution<int> crashDist(1, 10);
+                if (crashDist(gen) == 1) enemyName = "Segmentation Fault";
                 
                 Combatant player = {"Player", state.hp, state.maxHp, state.atk, state.def, state.chanceToRun};
                 Combatant enemy = {enemyName, enemyHp, enemyHp, enemyAtk, enemyDef, enemyRun};
