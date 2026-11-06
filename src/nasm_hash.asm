@@ -13,3 +13,5 @@ safe_nasm_spatial_hash:
     div r8
     mov rax, rdx
     ret
+
+section .note.GNU-stack noalloc noexec nowrite progbits
