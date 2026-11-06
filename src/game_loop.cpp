@@ -45,11 +45,11 @@ void GameLoop::start(MenuMain::Difficulty diff) {
     auto commands = Arsenal::getMockCommands();
     const auto configuredCommands = CommandConfig::loadCommands(CommandConfig::getConfigPath());
     if (!configuredCommands.empty()) {
-        commands.clear();
-        for (const auto& command : configuredCommands) {
-            commands[command.name] = command.executeCmd;
-        }
+        // Capture the configured commands' output for encounters, matching
+        // the compiled mock arsenal's name -> captured output shape.
+        commands = CommandConfig::buildArsenalMap(configuredCommands);
     }
+    commands.erase("obsfuria_version");
     
     while (true) {
         Terminal::clearScreen();
@@ -106,17 +106,23 @@ void GameLoop::start(MenuMain::Difficulty diff) {
                 int enemyRun = StatCalc::generateStat(static_cast<int>((20 + (distance / 5)) * diffMult), 1, 99);
                 
                 std::string enemyName = "Unknown Command";
+                std::string enemyOutput;
                 if (!commands.empty()) {
                     std::uniform_int_distribution<size_t> dist(0, commands.size() - 1);
                     auto it = commands.begin();
                     std::advance(it, dist(gen));
                     enemyName = it->first;
+                    enemyOutput = it->second;
                 }
                 std::uniform_int_distribution<int> crashDist(1, 10);
-                if (crashDist(gen) == 1) enemyName = "Segmentation Fault";
+                if (crashDist(gen) == 1) {
+                    enemyName = "Segmentation Fault";
+                    enemyOutput = "Segmentation fault (core dumped)";
+                }
                 
-                Combatant player = {"Player", state.hp, state.maxHp, state.atk, state.def, state.chanceToRun};
-                Combatant enemy = {enemyName, enemyHp, enemyHp, enemyAtk, enemyDef, enemyRun};
+                Combatant player = {"Player", state.hp, state.maxHp, state.atk, state.def, state.chanceToRun, {}};
+                Combatant enemy = {enemyName, enemyHp, enemyHp, enemyAtk, enemyDef, enemyRun, {}};
+                enemy.output = enemyOutput;
                 
                 bool survived = BattleLoop::startBattle(player, enemy);
                 

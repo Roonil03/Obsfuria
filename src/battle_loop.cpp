@@ -7,6 +7,44 @@
 #include <algorithm>
 #include <unistd.h>
 #include <random>
+#include <cctype>
+
+namespace {
+void renderEnemyOutput(const std::string& output) {
+    constexpr size_t maxLines = 6;
+    constexpr size_t maxLineLength = 100;
+    std::cout << "Enemy output:\n";
+    if (output.empty()) {
+        std::cout << "  (no captured output)\n";
+        return;
+    }
+
+    size_t lines = 0;
+    size_t lineLength = 0;
+    std::cout << "  ";
+    for (unsigned char ch : output) {
+        if (ch == '\n') {
+            std::cout << '\n';
+            if (++lines >= maxLines) {
+                std::cout << "  … output truncated …\n";
+                return;
+            }
+            lineLength = 0;
+            std::cout << "  ";
+        } else if (ch == '\r') {
+            continue;
+        } else if (std::isprint(ch)) {
+            if (lineLength >= maxLineLength) {
+                std::cout << "…\n  … output truncated …\n";
+                return;
+            }
+            std::cout << static_cast<char>(ch);
+            ++lineLength;
+        }
+    }
+    std::cout << '\n';
+}
+}
 
 bool BattleLoop::startBattle(Combatant& player, Combatant& enemy) {
     std::string sprite = SpriteGen::generate();
@@ -16,6 +54,7 @@ bool BattleLoop::startBattle(Combatant& player, Combatant& enemy) {
     while (player.hp > 0 && enemy.hp > 0) {
         Terminal::clearScreen();
         UIRenderer::renderEnemy(enemy.name, sprite);
+        renderEnemyOutput(enemy.output);
         std::cout << "\nPlayer HP: " << player.hp << "/" << player.maxHp << "\n";
         std::cout << "Enemy HP: " << enemy.hp << "/" << enemy.maxHp << "\n\n";
         UIRenderer::renderMenu("COMBAT", opts, selected);

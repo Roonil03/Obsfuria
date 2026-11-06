@@ -35,7 +35,7 @@ The game's enemy command list is configurable:
 - **Crazy List**: `assets/crazy_commands.txt` - commands with "dangerous-looking" names and mocked effects
 - **Custom**: Import your own `name|command` file via in-game menu
 
-The generator runs each configured command on the local machine and stores up to 25 lines of its output in the generated arsenal. During play, encounters display the captured output; they do not run the command. The Crazy List's commands mostly print explanatory messages, though entries such as `mount` can still query local system information while generating the arsenal.
+The generator runs each configured command on the local machine and stores up to 25 lines of its output. Starting a game with a custom list captures its output again. Encounters display that output; they do not run a command during combat. The Crazy List's commands mostly print explanatory messages, though entries such as `mount` can still query local system information during capture.
 
 In-game: `Main Menu → Change Command List`
 
