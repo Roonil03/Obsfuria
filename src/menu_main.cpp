@@ -153,10 +153,77 @@ void MenuMain::displayChangeCommands() {
                     Terminal::readKey();
                     break;
                 } else if (selected == 3) { // Edit Current List
-                    Terminal::clearScreen();
-                    std::cout << "Current list will be opened for editing. Not implemented yet.\r\n";
-                    std::cout << "Press any key to continue...\r\n";
-                    Terminal::readKey();
+                    std::vector<CommandEntry> cmds;
+                    if (exists(CommandConfig::getConfigPath())) {
+                        cmds = CommandConfig::loadCommands(CommandConfig::getConfigPath());
+                    } else {
+                        cmds = CommandConfig::getDefaultCommands();
+                    }
+
+                    bool changed = false;
+                    while (true) {
+                        Terminal::clearScreen();
+                        std::cout << "--- EDIT CURRENT COMMAND LIST ---\r\n";
+                        for (std::size_t i = 0; i < cmds.size(); ++i) {
+                            std::cout << (i + 1) << ") " << cmds[i].name << " | "
+                                      << cmds[i].executeCmd << "\r\n";
+                        }
+                        std::cout << "\r\nEnter a command number to edit, or 0 to finish: ";
+                        const std::string choice = readLine();
+                        if (choice == "0" || choice.empty()) break;
+
+                        std::size_t index = 0;
+                        try {
+                            std::size_t parsed = 0;
+                            const unsigned long value = std::stoul(choice, &parsed);
+                            if (parsed != choice.size() || value == 0 || value > cmds.size()) {
+                                throw std::out_of_range("command index");
+                            }
+                            index = static_cast<std::size_t>(value - 1);
+                        } catch (...) {
+                            std::cout << "Invalid command number. Press any key to continue...\r\n";
+                            Terminal::readKey();
+                            continue;
+                        }
+
+                        std::cout << "New name: ";
+                        const std::string name = readLine();
+                        std::cout << "New command: ";
+                        const std::string command = readLine();
+                        if (name.empty() || command.empty()) {
+                            std::cout << "Name and command must both be nonempty. Press any key...\r\n";
+                            Terminal::readKey();
+                            continue;
+                        }
+                        bool duplicate = false;
+                        for (std::size_t i = 0; i < cmds.size(); ++i) {
+                            if (i != index && cmds[i].name == name) duplicate = true;
+                        }
+                        if (duplicate) {
+                            std::cout << "That command name already exists. Press any key...\r\n";
+                            Terminal::readKey();
+                            continue;
+                        }
+                        cmds[index] = {name, command};
+                        changed = true;
+                        std::cout << "Command updated. Press any key to continue...\r\n";
+                        Terminal::readKey();
+                    }
+
+                    if (changed) {
+                        const bool saved = CommandConfig::saveCommands(CommandConfig::getConfigPath(), cmds);
+                        const bool regenerated = saved && CommandConfig::regenerateArsenal(cmds);
+                        Terminal::clearScreen();
+                        if (regenerated) {
+                            std::cout << "\x1b[32mCommand list saved and arsenal regenerated.\x1b[0m\r\n";
+                        } else if (saved) {
+                            std::cout << "\x1b[31mCommand list saved, but arsenal regeneration failed.\x1b[0m\r\n";
+                        } else {
+                            std::cout << "\x1b[31mFailed to save command list; changes were not persisted.\x1b[0m\r\n";
+                        }
+                        std::cout << "Press any key to continue...\r\n";
+                        Terminal::readKey();
+                    }
                     break;
                 } else if (selected == 4) { // Reset to Default
                     std::remove(CommandConfig::getConfigPath().c_str());
