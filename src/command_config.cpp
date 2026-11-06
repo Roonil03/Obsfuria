@@ -44,6 +44,14 @@ fs::path resolveAsset(const char* filename) {
     return relative;
 }
 
+bool samePath(const fs::path& first, const fs::path& second) {
+    std::error_code firstError;
+    std::error_code secondError;
+    const fs::path absoluteFirst = fs::absolute(first, firstError).lexically_normal();
+    const fs::path absoluteSecond = fs::absolute(second, secondError).lexically_normal();
+    return !firstError && !secondError && absoluteFirst == absoluteSecond;
+}
+
 std::string rawStringLiteral(const std::string& value) {
     std::string delimiter = "obsfuria";
     for (unsigned int suffix = 0;
@@ -114,16 +122,21 @@ std::string captureCommand(const std::string& command,
                 }
             }
         }
-        int status = 0;
-        if (waitpid(child, &status, WNOHANG) == child) childExited = true;
+        siginfo_t childInfo{};
+        if (waitid(P_PID, static_cast<id_t>(child), &childInfo,
+                   WEXITED | WNOHANG | WNOWAIT) == 0 && childInfo.si_pid == child) {
+            childExited = true;
+        }
     }
 
     close(pipeFds[0]);
-    if (!(pipeClosed && childExited)) kill(-child, SIGKILL);
-    if (!childExited) {
-        int status = 0;
-        while (waitpid(child, &status, 0) < 0 && errno == EINTR) {}
-    }
+    // A command can leave background children behind after its stdout closes.
+    // Keep the leader unreaped until its process group has been stopped so its
+    // process-group ID cannot be reused in between.
+    kill(-child, SIGKILL);
+    if (!childExited) kill(child, SIGKILL);
+    int status = 0;
+    while (waitpid(child, &status, 0) < 0 && errno == EINTR) {}
     return output;
 }
 }
@@ -151,14 +164,26 @@ fs::path CommandConfig::getActiveListPath() {
 }
 
 CommandConfig::List CommandConfig::getActiveList() {
-    std::ifstream in(getActiveListPath());
+    const fs::path activePath = getActiveListPath();
+    std::ifstream in(activePath);
     std::string value;
-    if (in >> value) return value == "USER" ? List::USER : List::SAFE;
+    if (in >> value) {
+        if (value == "USER") return List::USER;
+        if (value == "SAFE") return List::SAFE;
+        setActiveList(List::SAFE);
+        return List::SAFE;
+    }
 
     // Before the selector existed, commands.conf itself represented the
-    // active list. Preserve that choice on upgrade.
+    // active list. Persist the one-time migration before later edits can
+    // create a new commands.conf and accidentally make it look legacy.
     std::error_code ec;
-    return fs::is_regular_file(getUserListPath(), ec) ? List::USER : List::SAFE;
+    const bool selectorExists = fs::exists(activePath, ec);
+    const List inferred = !ec && fs::is_regular_file(getUserListPath(), ec)
+        ? List::USER : List::SAFE;
+    const List selected = selectorExists || ec ? List::SAFE : inferred;
+    setActiveList(selected);
+    return selected;
 }
 
 bool CommandConfig::setActiveList(List list) {
@@ -171,7 +196,8 @@ bool CommandConfig::setActiveList(List list) {
     std::ofstream out(path, std::ios::trunc);
     if (!out) return false;
     out << (list == List::USER ? "USER\n" : "SAFE\n");
-    return out.good();
+    out.close();
+    return !out.fail();
 }
 
 std::vector<CommandEntry> CommandConfig::loadActiveCommands() {
@@ -216,6 +242,13 @@ std::vector<CommandEntry> CommandConfig::loadCommands(const fs::path& path) {
 }
 
 bool CommandConfig::saveCommands(const fs::path& path, const std::vector<CommandEntry>& commands) {
+    if (samePath(path, getUserListPath())) {
+        // Initialize/migrate the selector before creating the user file.
+        // Otherwise a new list can be mistaken for a pre-selector legacy list.
+        (void)getActiveList();
+        std::error_code ec;
+        if (!fs::is_regular_file(getActiveListPath(), ec)) return false;
+    }
     if (!path.parent_path().empty()) fs::create_directories(path.parent_path());
     std::ofstream out(path);
     if (!out) return false;
