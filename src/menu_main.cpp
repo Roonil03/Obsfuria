@@ -9,6 +9,14 @@
 #include <fstream>
 #include <unistd.h>
 
+static std::string readLine() {
+    Terminal::disableRawMode();
+    std::string value;
+    std::getline(std::cin, value);
+    Terminal::enableRawMode();
+    return value;
+}
+
 MenuMain::Difficulty MenuMain::displayMenu() {
     bool canContinue = SaveEngine::hasValidSave();
     std::vector<std::string> opts;
@@ -52,8 +60,8 @@ MenuMain::Difficulty MenuMain::displayMenu() {
 
 void MenuMain::displayContribute() {
     Terminal::clearScreen();
-    std::cout << "[INFO] Please view the Contribute.md file for details on contributing!\r\n";
-    std::cout << "[INFO] Also see INSTALL.md for installation and CONTRIBUTING.md for guidelines.\r\n";
+    std::cout << "[INFO] See CONTRIBUTING.md for contribution guidelines.\r\n";
+    std::cout << "[INFO] See INSTALL.md for installation help.\r\n";
     std::cout << "Press any key to return...\r\n";
     Terminal::readKey();
 }
@@ -124,7 +132,7 @@ void MenuMain::displayChangeCommands() {
                     std::cout << "Enter path to custom command file (format: name|command per line):\r\n";
                     std::cout << "> ";
                     std::string path;
-                    std::getline(std::cin, path);
+                    path = readLine();
                     if (!path.empty()) {
                         auto cmds = CommandConfig::loadCommands(path);
                         if (!cmds.empty()) {
@@ -183,9 +191,8 @@ void MenuMain::displayAddCommands() {
     std::cout << "\x1b[31mWARNING: Adding commands will regenerate the arsenal and RESTART the game.\x1b[0m\r\n";
     std::cout << "\x1b[31mAny unsaved progress will be lost. Continue? (y/N): \x1b[0m";
     
-    char confirm;
-    std::cin >> confirm;
-    std::cin.ignore(10000, '\n');
+    std::string answer = readLine();
+    char confirm = answer.empty() ? 'n' : answer.front();
     
     if (confirm != 'y' && confirm != 'Y') {
         return;
@@ -200,7 +207,7 @@ void MenuMain::displayAddCommands() {
         
         std::cout << "Command name: ";
         std::string name;
-        std::getline(std::cin, name);
+        name = readLine();
         
         if (name.empty()) {
             break;
@@ -208,7 +215,7 @@ void MenuMain::displayAddCommands() {
         
         std::cout << "Command to execute: ";
         std::string cmd;
-        std::getline(std::cin, cmd);
+        cmd = readLine();
         
         if (cmd.empty()) {
             std::cout << "\x1b[31mCommand cannot be empty.\x1b[0m\r\n";

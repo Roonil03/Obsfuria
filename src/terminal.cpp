@@ -2,6 +2,8 @@
 #include <unistd.h>
 #include <cstdlib>
 #include <iostream>
+#include <poll.h>
+#include <cerrno>
 
 struct termios Terminal::orig_termios;
 bool Terminal::is_raw_mode = false;
@@ -11,9 +13,7 @@ bool Terminal::is_raw_mode = false;
  */
 void Terminal::enableRawMode() {
     if (is_raw_mode) return;
-    tcgetattr(STDIN_FILENO, &orig_termios);
-    atexit(disableRawMode);
-    
+    if (tcgetattr(STDIN_FILENO, &orig_termios) != 0) return;
     struct termios raw = orig_termios;
     raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
     raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
@@ -21,8 +21,10 @@ void Terminal::enableRawMode() {
     raw.c_cc[VMIN] = 1;
     raw.c_cc[VTIME] = 0;
     
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
-    is_raw_mode = true;
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == 0) {
+        is_raw_mode = true;
+        atexit(disableRawMode);
+    }
 }
 
 /*
@@ -41,12 +43,15 @@ int Terminal::readKey() {
     int nread;
     char c;
     while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
-        if (nread == -1) exit(1);
+        if (nread == 0 || (nread == -1 && errno != EINTR)) return ESC;
     }
     
     if (c == '\x1b') {
         char seq[3];
+        pollfd input = {STDIN_FILENO, POLLIN, 0};
+        if (poll(&input, 1, 50) != 1) return ESC;
         if (read(STDIN_FILENO, &seq[0], 1) != 1) return '\x1b';
+        if (poll(&input, 1, 50) != 1) return ESC;
         if (read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
         
         if (seq[0] == '[') {
