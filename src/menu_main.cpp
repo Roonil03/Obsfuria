@@ -102,10 +102,14 @@ void MenuMain::displayChangeCommands() {
             } else if (key == Terminal::ENTER) {
                 if (selected == 0) { // Safe List
                     auto cmds = CommandConfig::getDefaultCommands();
-                    if (CommandConfig::saveCommands(CommandConfig::getConfigPath(), cmds)) {
-                        CommandConfig::regenerateArsenal(cmds);
+                    if (cmds.empty()) {
                         Terminal::clearScreen();
-                        std::cout << "\x1b[32mSafe list applied and arsenal regenerated!\x1b[0m\r\n";
+                        std::cout << "\x1b[31mSafe list is empty; configuration was not changed.\x1b[0m\r\n";
+                    } else if (CommandConfig::saveCommands(CommandConfig::getConfigPath(), cmds)) {
+                        const bool regenerated = CommandConfig::regenerateArsenal(cmds);
+                        Terminal::clearScreen();
+                        std::cout << (regenerated ? "\x1b[32mSafe list applied and arsenal regenerated!\x1b[0m\r\n"
+                                                 : "\x1b[31mSafe list saved, but arsenal regeneration failed.\x1b[0m\r\n");
                     } else {
                         Terminal::clearScreen();
                         std::cout << "\x1b[31mFailed to apply safe list.\x1b[0m\r\n";
@@ -115,11 +119,18 @@ void MenuMain::displayChangeCommands() {
                     break;
                 } else if (selected == 1) { // Crazy List
                     auto cmds = CommandConfig::getCrazyCommands();
-                    if (CommandConfig::saveCommands(CommandConfig::getConfigPath(), cmds)) {
-                        CommandConfig::regenerateArsenal(cmds);
+                    if (cmds.empty()) {
                         Terminal::clearScreen();
-                        std::cout << "\x1b[33mCrazy list applied and arsenal regenerated!\x1b[0m\r\n";
-                        std::cout << "\x1b[33mNote: These are MOCKED commands - they display output but don't execute.\x1b[0m\r\n";
+                        std::cout << "\x1b[31mCrazy list is empty; configuration was not changed.\x1b[0m\r\n";
+                    } else if (CommandConfig::saveCommands(CommandConfig::getConfigPath(), cmds)) {
+                        const bool regenerated = CommandConfig::regenerateArsenal(cmds);
+                        Terminal::clearScreen();
+                        if (regenerated) {
+                            std::cout << "\x1b[33mCrazy list applied and arsenal regenerated!\x1b[0m\r\n";
+                            std::cout << "\x1b[33mCommands run while capturing output; encounters display the captured result.\x1b[0m\r\n";
+                        } else {
+                            std::cout << "\x1b[31mCrazy list saved, but arsenal regeneration failed.\x1b[0m\r\n";
+                        }
                     } else {
                         Terminal::clearScreen();
                         std::cout << "\x1b[31mFailed to apply crazy list.\x1b[0m\r\n";
@@ -137,9 +148,12 @@ void MenuMain::displayChangeCommands() {
                         auto cmds = CommandConfig::loadCommands(path);
                         if (!cmds.empty()) {
                             if (CommandConfig::saveCommands(CommandConfig::getConfigPath(), cmds)) {
-                                CommandConfig::regenerateArsenal(cmds);
                                 Terminal::clearScreen();
-                                std::cout << "\x1b[32mCustom list imported (" << cmds.size() << " commands)!\x1b[0m\r\n";
+                                if (CommandConfig::regenerateArsenal(cmds)) {
+                                    std::cout << "\x1b[32mCustom list imported (" << cmds.size() << " commands)!\x1b[0m\r\n";
+                                } else {
+                                    std::cout << "\x1b[31mCustom list saved, but arsenal regeneration failed.\x1b[0m\r\n";
+                                }
                             } else {
                                 Terminal::clearScreen();
                                 std::cout << "\x1b[31mFailed to save custom list.\x1b[0m\r\n";
@@ -226,11 +240,18 @@ void MenuMain::displayChangeCommands() {
                     }
                     break;
                 } else if (selected == 4) { // Reset to Default
-                    std::remove(CommandConfig::getConfigPath().c_str());
                     auto cmds = CommandConfig::getDefaultCommands();
-                    CommandConfig::regenerateArsenal(cmds);
                     Terminal::clearScreen();
-                    std::cout << "\x1b[32mReset to default command list!\x1b[0m\r\n";
+                    if (cmds.empty()) {
+                        std::cout << "\x1b[31mDefault command list is empty; configuration was not changed.\x1b[0m\r\n";
+                    } else if (!CommandConfig::regenerateArsenal(cmds)) {
+                        std::cout << "\x1b[31mFailed to regenerate default arsenal; configuration was not reset.\x1b[0m\r\n";
+                    } else if (std::remove(CommandConfig::getConfigPath().c_str()) == 0 ||
+                               !exists(CommandConfig::getConfigPath())) {
+                        std::cout << "\x1b[32mReset to default command list!\x1b[0m\r\n";
+                    } else {
+                        std::cout << "\x1b[31mDefault arsenal regenerated, but failed to remove saved configuration.\x1b[0m\r\n";
+                    }
                     std::cout << "Press any key to continue...\r\n";
                     Terminal::readKey();
                     break;
@@ -323,10 +344,12 @@ void MenuMain::displayAddCommands() {
     
     // Save and regenerate
     if (CommandConfig::saveCommands(CommandConfig::getConfigPath(), currentCmds)) {
-        CommandConfig::regenerateArsenal(currentCmds);
-        
         Terminal::clearScreen();
-        std::cout << "\x1b[32mSaved " << currentCmds.size() << " commands.\x1b[0m\r\n";
+        if (CommandConfig::regenerateArsenal(currentCmds)) {
+            std::cout << "\x1b[32mSaved " << currentCmds.size() << " commands.\x1b[0m\r\n";
+        } else {
+            std::cout << "\x1b[31mCommands saved, but arsenal regeneration failed.\x1b[0m\r\n";
+        }
         std::cout << "Press any key to return...\r\n";
         Terminal::readKey();
     } else {
