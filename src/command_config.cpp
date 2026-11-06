@@ -10,6 +10,18 @@
 
 namespace fs = std::filesystem;
 
+namespace {
+std::string rawStringLiteral(const std::string& value) {
+    std::string delimiter = "obsfuria";
+    for (unsigned int suffix = 0;
+        value.find(")" + delimiter + "\"") != std::string::npos;
+        ++suffix) {
+        delimiter = "obsfuria" + std::to_string(suffix);
+    }
+    return "R\"" + delimiter + "(" + value + ")" + delimiter + "\"";
+}
+}
+
 fs::path CommandConfig::getConfigPath() {
     const char* xdgConfig = std::getenv("XDG_CONFIG_HOME");
     if (xdgConfig && *xdgConfig) {
@@ -59,7 +71,7 @@ std::vector<CommandEntry> CommandConfig::loadCommands(const fs::path& path) {
 }
 
 bool CommandConfig::saveCommands(const fs::path& path, const std::vector<CommandEntry>& commands) {
-    fs::create_directories(path.parent_path());
+    if (!path.parent_path().empty()) fs::create_directories(path.parent_path());
     std::ofstream out(path);
     if (!out) return false;
     for (const auto& e : commands) {
@@ -119,9 +131,8 @@ bool CommandConfig::regenerateArsenal(const std::vector<CommandEntry>& commands)
     out << "        static const std::map<std::string, std::string> commands = {\n";
     
     for (const auto& [name, output] : arsenal) {
-        out << "            {\"" << name << "\", R\"obsfuria(";
-        out << output;
-        out << ")obsfuria\"},\n";
+        out << "            {" << rawStringLiteral(name) << ", ";
+        out << rawStringLiteral(output) << "},\n";
     }
     
     out << "        };\n";
