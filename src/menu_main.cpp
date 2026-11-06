@@ -188,8 +188,8 @@ void MenuMain::displayAddCommands() {
     
     Terminal::clearScreen();
     std::cout << "\x1b[33m=== ADD MORE COMMANDS ===\x1b[0m\r\n";
-    std::cout << "\x1b[31mWARNING: Adding commands will regenerate the arsenal and RESTART the game.\x1b[0m\r\n";
-    std::cout << "\x1b[31mAny unsaved progress will be lost. Continue? (y/N): \x1b[0m";
+    std::cout << "\x1b[33mNew commands will be available when you start a game.\x1b[0m\r\n";
+    std::cout << "Continue? (y/N): ";
     
     std::string answer = readLine();
     char confirm = answer.empty() ? 'n' : answer.front();
@@ -259,26 +259,9 @@ void MenuMain::displayAddCommands() {
         CommandConfig::regenerateArsenal(currentCmds);
         
         Terminal::clearScreen();
-        std::cout << "\x1b[32mCommands saved! Arsenal regenerated with " << currentCmds.size() << " commands.\x1b[0m\r\n";
-        std::cout << "\x1b[33mRestarting game...\x1b[0m\r\n";
-        
-        // Restart the game by exec'ing the binary
-        Terminal::disableRawMode();
-        
-        // Get the binary path
-        char exePath[1024];
-        ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
-        if (len != -1) {
-            exePath[len] = '\0';
-            execl(exePath, exePath, (char*)nullptr);
-        } else {
-            // Fallback
-            execl("./bin/Obsfuria", "./bin/Obsfuria", (char*)nullptr);
-        }
-        
-        // If exec fails
-        std::cerr << "Failed to restart game. Please run manually.\r\n";
-        std::exit(1);
+        std::cout << "\x1b[32mSaved " << currentCmds.size() << " commands.\x1b[0m\r\n";
+        std::cout << "Press any key to return...\r\n";
+        Terminal::readKey();
     } else {
         Terminal::clearScreen();
         std::cout << "\x1b[31mFailed to save commands.\x1b[0m\r\n";
