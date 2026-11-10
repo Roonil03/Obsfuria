@@ -10,7 +10,11 @@ void ExecMock::simulateCommand(const std::string& commandName) {
     
     std::cout << "[MOCK EXEC] obsfuria_user@local:~$ " << commandName << "\r\n";
     if (it != commands.end()) {
-        std::cout << it->second << "\r\n";
+        if (it->second.empty()) {
+            std::cout << "(no output)\r\n";
+        } else {
+            std::cout << it->second << "\r\n";
+        }
     } else {
         std::cout << "bash: " << commandName << ": command not found\r\n";
     }

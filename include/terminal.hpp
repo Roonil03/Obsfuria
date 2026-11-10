@@ -26,6 +26,8 @@ public:
      * Reads a single character from stdin (blocking). Returns special codes for arrows.
      */
     static int readKey();
+    static bool inputClosed();
+    static void installSignalHandlers();
     
     /*
      * Clears the terminal screen.

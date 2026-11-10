@@ -13,6 +13,7 @@ bool MenuPause::displayPause() {
         UIRenderer::renderMenu("PAUSED", opts, selected);
         
         int key = Terminal::readKey();
+        if (key < 0) return false;
         if (key == Terminal::ARROW_UP) {
             selected = (selected - 1 + opts.size()) % opts.size();
         } else if (key == Terminal::ARROW_DOWN) {

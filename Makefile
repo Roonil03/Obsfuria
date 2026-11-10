@@ -8,6 +8,7 @@ OBJ_DIR = obj
 BIN_DIR = bin
 TEST_DIR = tests
 PREFIX ?= /usr/local
+DESTDIR ?=
 
 CPP_SRCS = $(wildcard $(SRC_DIR)/*.cpp)
 CPP_OBJS = $(patsubst $(SRC_DIR)/%.cpp, $(OBJ_DIR)/%.o, $(CPP_SRCS))
@@ -31,18 +32,35 @@ ARSENAL_HPP = include/arsenal.hpp
 
 all: dirs $(ARSENAL_HPP) $(TARGET)
 
-install: all
-	install -Dm755 $(TARGET) $(DESTDIR)$(PREFIX)/bin/obsfuria
-	install -Dm644 assets/default_commands.txt $(DESTDIR)$(PREFIX)/share/obsfuria/assets/default_commands.txt
-	install -Dm644 assets/crazy_commands.txt $(DESTDIR)$(PREFIX)/share/obsfuria/assets/crazy_commands.txt
-	@if [ -n "$${SUDO_USER}" ]; then rm -f /home/$${SUDO_USER}/.local/bin/obsfuria; fi
-	@rm -f $${HOME}/.local/bin/obsfuria
+check-stage:
+	@if [ -n "$(DESTDIR)" ]; then \
+		stage=$$(realpath -m -- "$(DESTDIR)"); \
+		for path in "$(DESTDIR)$(PREFIX)/bin/obsfuria" \
+			"$(DESTDIR)$(PREFIX)/share/obsfuria/assets/default_commands.txt" \
+			"$(DESTDIR)$(PREFIX)/share/obsfuria/assets/crazy_commands.txt"; do \
+			resolved=$$(realpath -m -- "$$path"); \
+			case "$$resolved" in "$$stage"/*) ;; *) \
+				echo "Refusing path outside DESTDIR: $$path" >&2; exit 1;; \
+			esac; \
+		done; \
+	fi
+
+install: check-stage
+	@if [ ! -x "$(TARGET)" ]; then \
+		echo "$(TARGET) is missing; run 'make' as your regular user first." >&2; exit 1; \
+	fi
+	@if ! $(MAKE) --no-print-directory -q $(TARGET); then \
+		echo "$(TARGET) is out of date; run 'make' as your regular user first." >&2; exit 1; \
+	fi
+	install -Dm755 "$(TARGET)" "$(DESTDIR)$(PREFIX)/bin/obsfuria"
+	install -Dm644 assets/default_commands.txt "$(DESTDIR)$(PREFIX)/share/obsfuria/assets/default_commands.txt"
+	install -Dm644 assets/crazy_commands.txt "$(DESTDIR)$(PREFIX)/share/obsfuria/assets/crazy_commands.txt"
 	@echo "Installed to $(DESTDIR)$(PREFIX)/bin/obsfuria"
 
 dirs:
 	mkdir -p $(OBJ_DIR) $(BIN_DIR)
 
-$(ARSENAL_HPP):
+$(ARSENAL_HPP): scripts/add_commands.sh
 	bash ./scripts/add_commands.sh
 
 # These translation units include the generated header; make the dependency
@@ -83,14 +101,20 @@ $(TEST_COMMAND_CONFIG): $(TEST_DIR)/command_config_test.cpp $(OBJ_DIR)/command_c
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
 test: $(TEST_TARGET0) $(TEST_TARGET1) $(TEST_TARGET2) $(TEST_TARGET3) $(TEST_TARGET4) $(TEST_TARGET5) $(TEST_TARGET6) $(TEST_COMMAND_CONFIG)
+	@set -e; for test in $(TEST_TARGET0) $(TEST_TARGET1) $(TEST_TARGET2) $(TEST_TARGET3) $(TEST_TARGET4) $(TEST_TARGET5) $(TEST_TARGET6) $(TEST_COMMAND_CONFIG); do \
+		echo "Running $$test"; \
+		"./$$test"; \
+	done
 
-uninstall:
-	rm -f /usr/local/bin/obsfuria
-	@echo "Uninstalled from /usr/local/bin/obsfuria"
+uninstall: check-stage
+	rm -f "$(DESTDIR)$(PREFIX)/bin/obsfuria" \
+		"$(DESTDIR)$(PREFIX)/share/obsfuria/assets/default_commands.txt" \
+		"$(DESTDIR)$(PREFIX)/share/obsfuria/assets/crazy_commands.txt"
+	@echo "Uninstalled from $(DESTDIR)$(PREFIX)"
 
 clean:
 	rm -f $(OBJ_DIR)/*.o $(OBJ_DIR)/*.d $(BIN_DIR)/* Obsfuria
 
-.PHONY: all dirs clean test install uninstall
+.PHONY: all dirs clean test install uninstall check-stage
 
 -include $(CPP_OBJS:.o=.d)

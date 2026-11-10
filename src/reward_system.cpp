@@ -37,6 +37,7 @@ void RewardSystem::stealStat(Combatant& player, const Combatant& enemy, Difficul
         UIRenderer::renderMenu("REWARD: STAT STEAL", opts, selected);
         
         int key = Terminal::readKey();
+        if (key < 0) return;
         if (key == Terminal::ARROW_UP) {
             selected = (selected - 1 + opts.size()) % opts.size();
         } else if (key == Terminal::ARROW_DOWN) {

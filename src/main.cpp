@@ -4,6 +4,7 @@
 #include <iostream>
 
 int main() {
+    Terminal::installSignalHandlers();
     Terminal::enableRawMode();
     
     while (true) {

@@ -4,9 +4,25 @@
 #include <iostream>
 #include <poll.h>
 #include <cerrno>
+#include <csignal>
 
 struct termios Terminal::orig_termios;
 bool Terminal::is_raw_mode = false;
+namespace {
+volatile sig_atomic_t interrupted = 0;
+bool closed = false;
+void onSignal(int signal) { interrupted = signal; }
+}
+
+void Terminal::installSignalHandlers() {
+    struct sigaction action{};
+    action.sa_handler = onSignal;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = 0;
+    for (int signal : {SIGINT, SIGTERM, SIGHUP, SIGQUIT}) sigaction(signal, &action, nullptr);
+}
+
+bool Terminal::inputClosed() { return closed || interrupted != 0; }
 
 /*
  * Enables raw terminal mode.
@@ -40,10 +56,12 @@ void Terminal::disableRawMode() {
  * Reads a single keystroke, interpreting ANSI escapes for arrows.
  */
 int Terminal::readKey() {
+    if (inputClosed()) return -1;
     int nread;
     char c;
     while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
-        if (nread == 0 || (nread == -1 && errno != EINTR)) return ESC;
+        if (nread == 0 || (nread == -1 && errno != EINTR)) { closed = true; return -1; }
+        if (interrupted) return -1;
     }
     
     if (c == '\x1b') {

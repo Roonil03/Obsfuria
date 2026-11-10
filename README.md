@@ -2,7 +2,8 @@
 
 Obsfuria is a terminal-based, turn-based roguelike RPG.
 - Explore procedurally generated grids, encounter non-alphanumeric entities, and try to survive the simulated penalties.
-- Starting a game captures the selected Safe or User List commands locally; encounters display captured output as a mock.
+- The curated Safe List provides fixed mock output; custom User List commands may run locally when their output is captured. Use only trusted lists.
+- Encounters display captured output as a mock and do not run commands.
 - Explore through a tiny maze, and steal the stat of the enemy you defeat. **WARNING:** Be careful of the enemies you defeat, since the stats that you steal will affect your player character.
 
 

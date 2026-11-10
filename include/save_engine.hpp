@@ -19,18 +19,29 @@ struct GameState {
 
 struct SaveFile {
     static constexpr uint32_t MAGIC = 0x4F425346; // 'OBSF'
-    static constexpr uint16_t VERSION = 1;
-    
-    uint32_t magic;
-    uint16_t version;
-    GameState state;
-    uint32_t checksum;
+    static constexpr uint16_t VERSION = 2;
 };
 
 class SaveEngine {
 public:
+    enum class SaveOutcome {
+        SUCCESS,
+        FAILED_BEFORE_RENAME,
+        INSTALLED_DURABILITY_UNCERTAIN
+    };
+
+    enum class LoadOutcome {
+        LOADED,
+        MISSING,
+        INVALID,
+        INACCESSIBLE,
+        MIGRATION_FAILED
+    };
+
     static bool saveState(const GameState& state);
     static bool loadState(GameState& state);
+    static SaveOutcome lastSaveOutcome();
+    static LoadOutcome lastLoadOutcome();
     static bool hasValidSave();
     static void deleteSave();
     static std::string getSavePath();

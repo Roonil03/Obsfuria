@@ -1,29 +1,21 @@
 #!/usr/bin/env bash
 set -o pipefail
 
-OUT_DIR="include"
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+OUT_DIR="$SCRIPT_DIR/../include"
 OUT_FILE="$OUT_DIR/arsenal.hpp"
 mkdir -p "$OUT_DIR"
-
-# An explicit path is the most predictable option for one-off generation.
-XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-}
-if [[ -n "$XDG_CONFIG_HOME" ]]; then
-    USER_CONFIG="$XDG_CONFIG_HOME/obsfuria/commands.conf"
-elif [[ -n "${HOME:-}" ]]; then
-    USER_CONFIG="$HOME/.config/obsfuria/commands.conf"
-else
-    USER_CONFIG=""
-fi
+TMP_FILE=$(mktemp "$OUT_FILE.tmp.XXXXXX")
+trap 'rm -f "$TMP_FILE"' EXIT
 
 if [[ -n "${1:-}" ]]; then
     CONFIG_FILE=$1
-elif [[ -n "$USER_CONFIG" && -f "$USER_CONFIG" ]]; then
-    CONFIG_FILE=$USER_CONFIG
-elif [[ -f "assets/default_commands.txt" ]]; then
-    CONFIG_FILE="assets/default_commands.txt"
+    CUSTOM_CONFIG=1
 else
-    echo "No command config found (checked user config and assets/default_commands.txt)." >&2
-    exit 1
+    # Use only the repository's bundled list, independent of caller cwd or
+    # user configuration. This keeps normal builds reproducible and private.
+    CONFIG_FILE="$SCRIPT_DIR/../assets/default_commands.txt"
+    CUSTOM_CONFIG=0
 fi
 
 if [[ ! -f "$CONFIG_FILE" ]]; then
@@ -31,9 +23,13 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
     exit 1
 fi
 
-echo "Generating Obsfuria Arsenal from $CONFIG_FILE..."
+if (( CUSTOM_CONFIG )); then
+    echo "Generating CUSTOM arsenal from an explicit file (entry names will be embedded)."
+else
+    echo "Generating built-in static Obsfuria Arsenal."
+fi
 
-cat <<'EOF' > "$OUT_FILE"
+cat <<'EOF' > "$TMP_FILE"
 #ifndef ARSENAL_HPP
 #define ARSENAL_HPP
 
@@ -48,41 +44,41 @@ EOF
 
 # Emit a C++ raw string with a delimiter that cannot terminate inside VALUE.
 emit_raw_string() {
-    local value=$1 delimiter="obsfuria" suffix=0
+    local value=$1 base="obsfuria" delimiter="obsfuria" suffix=0
     while [[ "$value" == *")${delimiter}\""* ]]; do
-        delimiter="obsfuria${suffix}"
-        ((suffix += 1))
+        suffix=$((suffix + 1))
+        if (( suffix > 99999999 )); then
+            echo "Cannot encode a string with a valid C++ raw-string delimiter." >&2
+            return 1
+        fi
+        delimiter="${base}${suffix}"
     done
     printf 'R"%s(%s)%s"' "$delimiter" "$value" "$delimiter"
 }
 
+line_number=0
 while IFS='|' read -r name cmd || [[ -n "$name$cmd" ]]; do
-    [[ -z "$name" || "$name" =~ ^[[:space:]]*# ]] && continue
-    name=${name#"${name%%[![:space:]]*}"}
-    name=${name%"${name##*[![:space:]]}"}
-    cmd=${cmd#"${cmd%%[![:space:]]*}"}
-    cmd=${cmd%"${cmd##*[![:space:]]}"}
-    [[ -z "$name" ]] && continue
+    ((line_number += 1))
+    [[ -z "$name" || "$name" == \#* ]] && continue
 
-    echo "  -> Capturing: $name"
-
-    # Preserve command output's trailing newlines while command substitution
-    # is in use. Configured commands intentionally run to capture their mock.
-    captured=$(bash -c "$cmd" 2>/dev/null | head -n 25; printf '\034')
-    output=${captured%$'\034'}
-    if [[ -z "$output" ]]; then
-        command_name=${cmd%%[[:space:]]*}
-        output="bash: ${command_name}: command not found or output restricted by local system."
+    if (( ${#name} > 128 )) || [[ "$name" == *"|"* || "$name" =~ [[:cntrl:]] || -z "$cmd" ]]; then
+        echo "Invalid command name on line $line_number: names must be at most 128 characters and contain no control characters." >&2
+        exit 1
     fi
 
-    printf '            {' >> "$OUT_FILE"
-    emit_raw_string "$name" >> "$OUT_FILE"
-    printf ', ' >> "$OUT_FILE"
-    emit_raw_string "$output" >> "$OUT_FILE"
-    printf '},\n' >> "$OUT_FILE"
+    # Generation happens during builds and installs. Never execute configured
+    # commands here: the command list may come from a user's private config.
+    # Runtime capture is handled by the game when a session starts.
+    output="[Output is captured when a game starts.]"
+
+    printf '            {' >> "$TMP_FILE"
+    emit_raw_string "$name" >> "$TMP_FILE" || exit 1
+    printf ', ' >> "$TMP_FILE"
+    emit_raw_string "$output" >> "$TMP_FILE" || exit 1
+    printf '},\n' >> "$TMP_FILE"
 done < "$CONFIG_FILE"
 
-cat <<'EOF' >> "$OUT_FILE"
+cat <<'EOF' >> "$TMP_FILE"
             {"obsfuria_version", "1.0.0"}
         };
         return commands;
@@ -92,4 +88,6 @@ cat <<'EOF' >> "$OUT_FILE"
 #endif
 EOF
 
+mv -- "$TMP_FILE" "$OUT_FILE"
+trap - EXIT
 echo "Success! $OUT_FILE generated successfully."

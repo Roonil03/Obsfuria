@@ -13,6 +13,7 @@ static bool readLineOrEscape(std::string& value, bool escapeCancels = true) {
     value.clear();
     while (true) {
         const int key = Terminal::readKey();
+        if (key < 0) return false;
         if (key == Terminal::ESC) {
             if (escapeCancels) return false;
             continue;
@@ -39,7 +40,7 @@ static std::string clickableUserListPath() {
     namespace fs = std::filesystem;
     const fs::path absolute = fs::absolute(CommandConfig::getUserListPath()).lexically_normal();
     const fs::path relative = absolute.lexically_relative(fs::current_path());
-    const std::string label = (relative.empty() ? absolute : relative).string();
+    const std::string label = CommandConfig::escapeForDisplay((relative.empty() ? absolute : relative).string());
 
     std::ostringstream uri;
     uri << "file://";
@@ -58,6 +59,7 @@ static std::string clickableUserListPath() {
 
 MenuMain::Difficulty MenuMain::displayMenu() {
     bool canContinue = SaveEngine::hasValidSave();
+    const auto saveStatus = SaveEngine::lastLoadOutcome();
     std::vector<std::string> opts;
     if (canContinue) {
         opts = {"Continue", "New Game (Easy Mode)", "New Game (Hard Mode)", "Reload Enemy Commands", "Add More Commands", "Contribute", "Exit"};
@@ -68,10 +70,17 @@ MenuMain::Difficulty MenuMain::displayMenu() {
     int selected = 0;
     
     while (true) {
+        if (Terminal::inputClosed()) return Difficulty::EXIT;
         Terminal::clearScreen();
+        if (!canContinue && saveStatus != SaveEngine::LoadOutcome::MISSING) {
+            std::cout << "Saved game is "
+                      << (saveStatus == SaveEngine::LoadOutcome::INVALID ? "invalid" : "inaccessible")
+                      << "; it was not reset.\r\n";
+        }
         UIRenderer::renderMenu("OBSFURIA MAIN MENU", opts, selected);
         
         int key = Terminal::readKey();
+        if (key < 0) return Difficulty::EXIT;
         if (key == Terminal::ARROW_UP) {
             selected = (selected - 1 + opts.size()) % opts.size();
         } else if (key == Terminal::ARROW_DOWN) {
@@ -109,6 +118,7 @@ void MenuMain::displayChangeCommands() {
     using namespace std::filesystem;
     
     while (true) {
+        if (Terminal::inputClosed()) return;
         Terminal::clearScreen();
         std::vector<std::string> opts = {
             "Safe List",
@@ -121,6 +131,7 @@ void MenuMain::displayChangeCommands() {
         int selected = 0;
         
         while (true) {
+            if (Terminal::inputClosed()) return;
             Terminal::clearScreen();
             std::cout << "\x1b[36m--- RELOAD ENEMY COMMANDS ---\x1b[0m\r\n";
             std::cout << "Active list: "
@@ -133,6 +144,7 @@ void MenuMain::displayChangeCommands() {
             UIRenderer::renderMenu("COMMAND LIST OPTIONS", opts, selected);
             
             int key = Terminal::readKey();
+            if (key < 0) return;
             if (key == Terminal::ARROW_UP) {
                 selected = (selected - 1 + opts.size()) % opts.size();
             } else if (key == Terminal::ARROW_DOWN) {
@@ -212,8 +224,8 @@ void MenuMain::displayChangeCommands() {
                         Terminal::clearScreen();
                         std::cout << "--- EDIT CURRENT COMMAND LIST ---\r\n";
                         for (std::size_t i = 0; i < cmds.size(); ++i) {
-                            std::cout << (i + 1) << ") " << cmds[i].name << " | "
-                                      << cmds[i].executeCmd << "\r\n";
+                            std::cout << (i + 1) << ") " << CommandConfig::escapeForDisplay(cmds[i].name) << " | "
+                                      << CommandConfig::escapeForDisplay(cmds[i].executeCmd) << "\r\n";
                         }
                         std::cout << "\r\nEnter a command number to edit, or 0 to finish: ";
                         std::string choice;
@@ -249,8 +261,8 @@ void MenuMain::displayChangeCommands() {
                             canceled = true;
                             break;
                         }
-                        if (name.empty() || command.empty()) {
-                            std::cout << "Name and command must both be nonempty. Press any key...\r\n";
+                        if (name.empty() || name.front() == '#' || name.find('|') != std::string::npos || command.empty()) {
+                            std::cout << "Use a nonempty name without # at the start or |, and a nonempty command. Press any key...\r\n";
                             Terminal::readKey();
                             continue;
                         }
@@ -322,7 +334,7 @@ void MenuMain::displayAddCommands() {
     std::cout << "Continue? (y/N): ";
     
     std::string answer;
-    readLineOrEscape(answer, false);
+    if (!readLineOrEscape(answer, false)) return;
     char confirm = answer.empty() ? 'n' : answer.front();
     
     if (confirm != 'y' && confirm != 'Y') {
@@ -330,6 +342,7 @@ void MenuMain::displayAddCommands() {
     }
     
     while (true) {
+        if (Terminal::inputClosed()) return;
         Terminal::clearScreen();
         std::cout << "\x1b[36m--- ADD COMMAND ---\x1b[0m\r\n";
         std::cout << "Current commands: " << currentCmds.size() << "\r\n";
@@ -338,15 +351,20 @@ void MenuMain::displayAddCommands() {
         
         std::cout << "Command name: ";
         std::string name;
-        readLineOrEscape(name, false);
+        if (!readLineOrEscape(name, false)) return;
         
         if (name.empty()) {
             break;
         }
+        if (name.front() == '#' || name.find('|') != std::string::npos) {
+            std::cout << "Name cannot start with # or contain |. Press any key...\r\n";
+            Terminal::readKey();
+            continue;
+        }
         
         std::cout << "Command to execute: ";
         std::string cmd;
-        readLineOrEscape(cmd, false);
+        if (!readLineOrEscape(cmd, false)) return;
         
         if (cmd.empty()) {
             std::cout << "\x1b[31mCommand cannot be empty.\x1b[0m\r\n";
@@ -372,7 +390,8 @@ void MenuMain::displayAddCommands() {
         }
         
         currentCmds.push_back({name, cmd});
-        std::cout << "\x1b[32mAdded: " << name << " | " << cmd << "\x1b[0m\r\n";
+        std::cout << "\x1b[32mAdded: " << CommandConfig::escapeForDisplay(name) << " | "
+                  << CommandConfig::escapeForDisplay(cmd) << "\x1b[0m\r\n";
         std::cout << "Press any key to continue...\r\n";
         Terminal::readKey();
     }

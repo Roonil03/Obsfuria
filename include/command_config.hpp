@@ -31,6 +31,7 @@ public:
     static bool saveCommands(const fs::path& path, const std::vector<CommandEntry>& commands);
     static std::vector<CommandEntry> getDefaultCommands();
     static std::vector<CommandEntry> getCrazyCommands();
+    static std::string escapeForDisplay(const std::string& value);
     
     static bool regenerateArsenal(const std::vector<CommandEntry>& commands);
     static std::map<std::string, std::string> buildArsenalMap(const std::vector<CommandEntry>& commands);

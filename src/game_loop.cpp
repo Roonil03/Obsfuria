@@ -14,22 +14,47 @@
 #include <cstddef>
 #include <random>
 
+namespace {
+bool saveOrQuit(const GameState& state) {
+    while (true) {
+        if (SaveEngine::saveState(state)) return true;
+        Terminal::clearScreen();
+        if (SaveEngine::lastSaveOutcome() == SaveEngine::SaveOutcome::INSTALLED_DURABILITY_UNCERTAIN) {
+            std::cout << "Save installed, but storage durability is uncertain. Press any key to continue.\r\n";
+            Terminal::readKey();
+            return true;
+        }
+        std::cout << "Save failed. Press R to retry or Q to quit without saving.\r\n";
+        const int key = Terminal::readKey();
+        if (key == 'r' || key == 'R') continue;
+        if (key == 'q' || key == 'Q' || key < 0) return false;
+    }
+}
+}
+
 void GameLoop::start(MenuMain::Difficulty diff) {
     GameState state;
     
     if (diff == MenuMain::Difficulty::CONTINUE) {
-        if (SaveEngine::loadState(state)) {
-        } else {
-            diff = MenuMain::Difficulty::EASY;
+        if (!SaveEngine::loadState(state)) {
+            Terminal::clearScreen();
+            const auto reason = SaveEngine::lastLoadOutcome();
+            std::cout << "Unable to load the saved game ("
+                      << (reason == SaveEngine::LoadOutcome::INVALID ? "invalid" :
+                          reason == SaveEngine::LoadOutcome::INACCESSIBLE ? "inaccessible" :
+                          reason == SaveEngine::LoadOutcome::MIGRATION_FAILED ? "migration failed" : "missing")
+                      << "). Press any key to return.\r\n";
+            Terminal::readKey();
+            return;
         }
     }
     
     if (diff == MenuMain::Difficulty::EASY) {
         state = {1, 1, 20, 20, 10, 5, 75, Difficulty::EASY};
-        SaveEngine::saveState(state);
+        if (!saveOrQuit(state)) return;
     } else if (diff == MenuMain::Difficulty::HARD) {
         state = {1, 1, 10, 10, 5, 2, 25, Difficulty::HARD};
-        SaveEngine::saveState(state);
+        if (!saveOrQuit(state)) return;
     } else if (diff == MenuMain::Difficulty::CHANGE_COMMANDS) {
         MenuMain::displayChangeCommands();
         return;
@@ -43,12 +68,19 @@ void GameLoop::start(MenuMain::Difficulty diff) {
     // Resolve the selected list for every game start so edits made between
     // runs are picked up. The compiled arsenal remains a fallback for a
     // missing or empty user list.
-    auto commands = Arsenal::getMockCommands();
+    std::map<std::string, std::string> commands;
+    const auto activeList = CommandConfig::getActiveList();
     const auto configuredCommands = CommandConfig::loadActiveCommands();
-    if (!configuredCommands.empty()) {
+    if (activeList == CommandConfig::List::SAFE) {
+        for (const auto& entry : configuredCommands) {
+            commands.emplace(entry.name, "Obsfuria node active\n");
+        }
+    } else if (!configuredCommands.empty()) {
         // Capture the configured commands' output for encounters, matching
         // the compiled mock arsenal's name -> captured output shape.
         commands = CommandConfig::buildArsenalMap(configuredCommands);
+    } else {
+        commands = Arsenal::getMockCommands();
     }
     commands.erase("obsfuria_version");
     
@@ -73,6 +105,7 @@ void GameLoop::start(MenuMain::Difficulty diff) {
         }
         
         int key = Terminal::readKey();
+        if (key < 0) { saveOrQuit(state); return; }
         int nx = state.x, ny = state.y;
         
         if (key == 'w' || key == 'W') ny--;
@@ -82,11 +115,11 @@ void GameLoop::start(MenuMain::Difficulty diff) {
         else if (key == 'p' || key == 'P' || key == Terminal::ESC) {
             bool resume = MenuPause::displayPause();
             if (!resume) {
-                SaveEngine::saveState(state);
+                saveOrQuit(state);
                 break;
             }
         } else if (key == 'q' || key == 'Q') {
-            SaveEngine::saveState(state);
+            saveOrQuit(state);
             break;
         }
         
@@ -143,7 +176,7 @@ void GameLoop::start(MenuMain::Difficulty diff) {
                     state.def = player.def;
                     state.chanceToRun = player.chanceToRun;
                     
-                    SaveEngine::saveState(state);
+                    if (!saveOrQuit(state)) return;
                 } else {
                     ErrSimulate::simulateCrash(enemy.name);
                 }

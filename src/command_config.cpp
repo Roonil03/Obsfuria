@@ -23,7 +23,6 @@ namespace {
 fs::path resolveAsset(const char* filename) {
     const fs::path relative = fs::path("assets") / filename;
     std::error_code ec;
-    if (fs::is_regular_file(relative, ec)) return relative;
 
     // Resolve assets beside the executable for relocatable installs and builds
     // launched from another working directory.
@@ -41,7 +40,35 @@ fs::path resolveAsset(const char* filename) {
             if (fs::is_regular_file(candidate, ec)) return candidate;
         }
     }
-    return relative;
+    return {};
+}
+
+const std::vector<CommandEntry>& safeCommands() {
+    // Fixed commands prevent a launch directory or packaging asset from
+    // silently supplying shell code for the Safe List.
+    static const std::vector<CommandEntry> entries = [] {
+        static const char* names[] = {
+            "ls", "ls -l", "ls -a", "ls -la", "pwd", "tree", "stat", "file",
+            "du", "df", "uname", "hostname", "whoami", "id", "groups",
+            "who", "w", "uptime", "free", "ps", "date", "cal", "locale",
+            "env", "echo USER", "echo SHELL", "echo TERM", "ping", "ip a",
+            "ss", "cat os-release", "cat version", "head passwd",
+            "md5sum passwd", "sha256sum passwd", "basename", "dirname",
+            "type echo", "tty", "echo test", "seq 1 5", "seq 10 -1 1",
+            "factor 1024", "base64", "cowsay", "fortune"
+        };
+        std::vector<CommandEntry> result;
+        result.reserve(sizeof(names) / sizeof(names[0]));
+        for (const char* name : names) result.push_back({name, "printf 'Obsfuria node active\\n'"});
+        return result;
+    }();
+    return entries;
+}
+
+bool validEntry(const CommandEntry& e) {
+    return !e.name.empty() && e.name.front() != '#' && !e.executeCmd.empty() &&
+        e.name.find_first_of(std::string("|\r\n\0", 4)) == std::string::npos &&
+        e.executeCmd.find_first_of(std::string("\r\n\0", 3)) == std::string::npos;
 }
 
 bool samePath(const fs::path& first, const fs::path& second) {
@@ -62,7 +89,12 @@ std::string rawStringLiteral(const std::string& value) {
     return "R\"" + delimiter + "(" + value + ")" + delimiter + "\"";
 }
 
-std::string captureCommand(const std::string& command,
+struct CaptureResult {
+    std::string output;
+    enum class Status { OK, FAILED, TIMED_OUT, LIMITED } status = Status::FAILED;
+};
+
+CaptureResult captureCommand(const std::string& command,
                            std::chrono::steady_clock::time_point deadline) {
     constexpr size_t maxBytes = 16 * 1024;
     constexpr size_t maxLines = 25;
@@ -78,7 +110,11 @@ std::string captureCommand(const std::string& command,
     if (child == 0) {
         close(pipeFds[0]);
         setpgid(0, 0);
+        const int nullFd = open("/dev/null", O_RDONLY);
+        if (nullFd < 0 || dup2(nullFd, STDIN_FILENO) < 0) _exit(127);
+        close(nullFd);
         dup2(pipeFds[1], STDOUT_FILENO);
+        dup2(pipeFds[1], STDERR_FILENO);
         close(pipeFds[1]);
         execl("/bin/sh", "sh", "-c", command.c_str(), static_cast<char*>(nullptr));
         _exit(127);
@@ -137,7 +173,16 @@ std::string captureCommand(const std::string& command,
     if (!childExited) kill(child, SIGKILL);
     int status = 0;
     while (waitpid(child, &status, 0) < 0 && errno == EINTR) {}
-    return output;
+    CaptureResult result;
+    result.output = std::move(output);
+    if (std::chrono::steady_clock::now() >= deadline && !hitLimit) {
+        result.status = CaptureResult::Status::TIMED_OUT;
+    } else if (hitLimit) {
+        result.status = CaptureResult::Status::LIMITED;
+    } else if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+        result.status = CaptureResult::Status::OK;
+    }
+    return result;
 }
 }
 
@@ -226,22 +271,14 @@ std::vector<CommandEntry> CommandConfig::loadCommands(const fs::path& path) {
             CommandEntry e;
             e.name = line.substr(0, pos);
             e.executeCmd = line.substr(pos + 1);
-            // Trim whitespace
-            auto trim = [](std::string& s) {
-                size_t start = s.find_first_not_of(" \t\r\n");
-                size_t end = s.find_last_not_of(" \t\r\n");
-                if (start == std::string::npos) { s.clear(); return; }
-                s = s.substr(start, end - start + 1);
-            };
-            trim(e.name);
-            trim(e.executeCmd);
-            if (!e.name.empty()) commands.push_back(std::move(e));
+            if (validEntry(e)) commands.push_back(std::move(e));
         }
     }
     return commands;
 }
 
 bool CommandConfig::saveCommands(const fs::path& path, const std::vector<CommandEntry>& commands) {
+    for (const auto& entry : commands) if (!validEntry(entry)) return false;
     if (samePath(path, getUserListPath())) {
         // Initialize/migrate the selector before creating the user file.
         // Otherwise a new list can be mistaken for a pre-selector legacy list.
@@ -249,7 +286,11 @@ bool CommandConfig::saveCommands(const fs::path& path, const std::vector<Command
         std::error_code ec;
         if (!fs::is_regular_file(getActiveListPath(), ec)) return false;
     }
-    if (!path.parent_path().empty()) fs::create_directories(path.parent_path());
+    if (!path.parent_path().empty()) {
+        std::error_code ec;
+        fs::create_directories(path.parent_path(), ec);
+        if (ec) return false;
+    }
     std::ofstream out(path);
     if (!out) return false;
     for (const auto& e : commands) {
@@ -259,7 +300,22 @@ bool CommandConfig::saveCommands(const fs::path& path, const std::vector<Command
 }
 
 std::vector<CommandEntry> CommandConfig::getDefaultCommands() {
-    return loadCommands(getDefaultAssetPath());
+    return safeCommands();
+}
+
+std::string CommandConfig::escapeForDisplay(const std::string& value) {
+    static constexpr char hex[] = "0123456789ABCDEF";
+    std::string escaped;
+    for (unsigned char ch : value) {
+        if (ch < 0x20 || ch == 0x7f || (ch >= 0x80 && ch <= 0x9f)) {
+            escaped += "\\x";
+            escaped += hex[ch >> 4];
+            escaped += hex[ch & 15];
+        } else {
+            escaped += static_cast<char>(ch);
+        }
+    }
+    return escaped;
 }
 
 std::vector<CommandEntry> CommandConfig::getCrazyCommands() {
@@ -272,12 +328,14 @@ std::map<std::string, std::string> CommandConfig::buildArsenalMap(const std::vec
     for (const auto& e : commands) {
         const auto commandDeadline = std::min(totalDeadline,
             std::chrono::steady_clock::now() + std::chrono::seconds(1));
-        std::string output = std::chrono::steady_clock::now() < totalDeadline
+        CaptureResult captured = std::chrono::steady_clock::now() < totalDeadline
             ? captureCommand(e.executeCmd, commandDeadline)
-            : std::string{};
-        if (output.empty()) {
-            output = "bash: " + e.executeCmd.substr(0, e.executeCmd.find(' ')) + ": command not found or output restricted.";
-        }
+            : CaptureResult{{}, CaptureResult::Status::TIMED_OUT};
+        std::string output = std::move(captured.output);
+        if (captured.status == CaptureResult::Status::TIMED_OUT) output += "\n[command timed out]";
+        else if (captured.status == CaptureResult::Status::LIMITED) output += "\n[output limit reached]";
+        else if (captured.status == CaptureResult::Status::FAILED) output += "\n[command failed]";
+        else if (output.empty()) output = "[command produced no output]";
         // Limit to 25 lines
         size_t lines = 0;
         std::string limited;

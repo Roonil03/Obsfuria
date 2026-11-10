@@ -60,6 +60,7 @@ bool BattleLoop::startBattle(Combatant& player, Combatant& enemy) {
         UIRenderer::renderMenu("COMBAT", opts, selected);
         
         int key = Terminal::readKey();
+        if (key < 0) return true;
         if (key == Terminal::ARROW_UP) {
             selected = (selected - 1 + opts.size()) % opts.size();
         } else if (key == Terminal::ARROW_DOWN) {
