@@ -10,6 +10,7 @@ struct Combatant {
     int atk;
     int def;
     int chanceToRun;
+    std::string output;
 };
 
 class BattleLoop {

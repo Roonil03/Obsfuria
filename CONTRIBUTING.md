@@ -27,10 +27,12 @@ Enemies are command names from the arsenal. To add new enemies:
 
 1. **Option A (Config file)**: Add entries to `assets/default_commands.txt` or `assets/crazy_commands.txt` using `name|command` format
 2. **Option B (User config)**: Users can import custom lists via `Change Command List → Import Custom File`
-3. **Formatting rules** (strict):
-   - Enemy names displayed in-game must be **non-alphanumeric** or **C-error style** (e.g., "Segmentation Fault", "Stack Overflow")
-   - Command output captured at build time must not contain the delimiter `)obsfuria"`
-   - Use raw string literals `R"obsfuria(...)obsfuria"` in generated `arsenal.hpp`
+3. **Execution behavior**:
+   - The arsenal generator runs each configured shell command on the local machine and captures up to 25 output lines. Add entries only when that local execution is intended.
+   - During gameplay, enemies show the captured output; encounters do not execute the commands.
+4. **Formatting**:
+   - Follow the game's enemy naming convention: non-alphanumeric names or C-error style names (for example, "Segmentation Fault" or "Stack Overflow").
+   - The generator chooses safe C++ string delimiters automatically; do not edit generated `include/arsenal.hpp` by hand.
 
 ## Adding New Phases/Tests
 
@@ -44,7 +46,7 @@ Enemies are command names from the arsenal. To add new enemies:
 - `src/main.cpp` → `MenuMain` → `GameLoop` → `BattleLoop`
 - `SpatialManager` wraps NASM (`nasm_hash.asm`, `nasm_crypto.asm`)
 - `SaveEngine` uses XOR `0xAA` + CRC32, saves to XDG `~/.local/share/obsfuria/`
-- `Arsenal` loads from generated `include/arsenal.hpp` (compile-time) or runtime config
+- `Arsenal` loads captured command output from generated `include/arsenal.hpp`; command lists are stored in the user's config directory
 - `StatCalc` generates distance-scaled stats; `RewardSystem` caps by difficulty
 
 ## Reporting Issues

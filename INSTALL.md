@@ -23,15 +23,22 @@ sudo make install                       # Installs to /usr/local/bin/obsfuria
 obsfuria                                # Run from anywhere
 ```
 
+`make install` also installs the Safe and Crazy command lists under
+`/usr/local/share/obsfuria/assets`. The executable locates these relative to
+its own installation path, so both lists remain available when launched from
+another working directory. Set `PREFIX` to choose an alternate install
+prefix; package staging can use `DESTDIR`.
+
 ## Command Arsenal Configuration
-The game's enemy command list is configurable:
-- **Safe List** (default): `assets/default_commands.txt` - 46 informational commands
-- **Crazy List**: `assets/crazy_commands.txt` - 21 "dangerous-looking" mocked commands
-- **Custom**: Import your own `name|command` file via in-game menu
+The game's enemy command list can use:
+- **Safe List**: `assets/default_commands.txt` - informational command entries
+- **User List**: your editable `name|command` entries, with support for adding commands or importing a file from the in-game menu
 
-In-game: `Main Menu → Change Command List`
+Starting a game captures each selected command's output on the local machine, up to 25 lines per command. Encounters display that output; they do not run a command during combat. Commands in a user-provided list can perform any action allowed to your user account.
 
-Config persists at `~/.config/obsfuria/commands.conf`
+In-game: `Main Menu → Reload Enemy Commands` lets you choose the Safe List or User List. The User List can be edited, extended, or imported from that menu, and the main-menu **Add More Commands** option also edits it. Selecting a list persists across launches and reloads the enemy pool for the next game. Choosing a list does not run its commands.
+
+The editable user list is `$XDG_CONFIG_HOME/obsfuria/commands.conf` when `XDG_CONFIG_HOME` is set, otherwise `~/.config/obsfuria/commands.conf`. The menu displays its current path as a clickable terminal link. To generate from a specific file, pass it explicitly: `bash ./scripts/add_commands.sh path/to/commands.conf`. An explicit path takes priority; without one, the generator uses the user list if present, then `assets/default_commands.txt`.
 
 ## Save Files
 Game state saves to XDG path: `~/.local/share/obsfuria/save.bin`

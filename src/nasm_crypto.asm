@@ -13,3 +13,5 @@ nasm_xor_encrypt_decrypt:
     jnz .loop
 .done:
     ret
+
+section .note.GNU-stack noalloc noexec nowrite progbits

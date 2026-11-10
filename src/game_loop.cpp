@@ -7,9 +7,11 @@
 #include "menu_pause.hpp"
 #include "stat_calc.hpp"
 #include "arsenal.hpp"
+#include "command_config.hpp"
 #include "reward_system.hpp"
 #include <iostream>
 #include <string>
+#include <cstddef>
 #include <random>
 
 void GameLoop::start(MenuMain::Difficulty diff) {
@@ -38,7 +40,17 @@ void GameLoop::start(MenuMain::Difficulty diff) {
     
     std::random_device rd;
     std::mt19937 gen(rd());
+    // Resolve the selected list for every game start so edits made between
+    // runs are picked up. The compiled arsenal remains a fallback for a
+    // missing or empty user list.
     auto commands = Arsenal::getMockCommands();
+    const auto configuredCommands = CommandConfig::loadActiveCommands();
+    if (!configuredCommands.empty()) {
+        // Capture the configured commands' output for encounters, matching
+        // the compiled mock arsenal's name -> captured output shape.
+        commands = CommandConfig::buildArsenalMap(configuredCommands);
+    }
+    commands.erase("obsfuria_version");
     
     while (true) {
         Terminal::clearScreen();
@@ -94,15 +106,24 @@ void GameLoop::start(MenuMain::Difficulty diff) {
                 int enemyDef = StatCalc::generateStat(static_cast<int>((1 + (distance / 15)) * diffMult), 0, 999);
                 int enemyRun = StatCalc::generateStat(static_cast<int>((20 + (distance / 5)) * diffMult), 1, 99);
                 
-                std::uniform_int_distribution<> dist(0, commands.size() - 1);
-                auto it = commands.begin();
-                std::advance(it, dist(gen));
-                std::string enemyName = it->first;
+                std::string enemyName = "Unknown Command";
+                std::string enemyOutput;
+                if (!commands.empty()) {
+                    std::uniform_int_distribution<size_t> dist(0, commands.size() - 1);
+                    auto it = commands.begin();
+                    std::advance(it, dist(gen));
+                    enemyName = it->first;
+                    enemyOutput = it->second;
+                }
+                std::uniform_int_distribution<int> crashDist(1, 10);
+                if (crashDist(gen) == 1) {
+                    enemyName = "Segmentation Fault";
+                    enemyOutput = "Segmentation fault (core dumped)";
+                }
                 
-                if (dist(gen) % 10 == 0) enemyName = "Segmentation Fault";
-                
-                Combatant player = {"Player", state.hp, state.maxHp, state.atk, state.def, state.chanceToRun};
-                Combatant enemy = {enemyName, enemyHp, enemyHp, enemyAtk, enemyDef, enemyRun};
+                Combatant player = {"Player", state.hp, state.maxHp, state.atk, state.def, state.chanceToRun, {}};
+                Combatant enemy = {enemyName, enemyHp, enemyHp, enemyAtk, enemyDef, enemyRun, {}};
+                enemy.output = enemyOutput;
                 
                 bool survived = BattleLoop::startBattle(player, enemy);
                 

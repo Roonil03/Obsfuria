@@ -15,9 +15,17 @@ struct CommandEntry {
 
 class CommandConfig {
 public:
+    enum class List { SAFE, USER };
+
     static fs::path getConfigPath();
+    static fs::path getUserListPath();
+    static fs::path getActiveListPath();
     static fs::path getDefaultAssetPath();
     static fs::path getCrazyAssetPath();
+
+    static List getActiveList();
+    static bool setActiveList(List list);
+    static std::vector<CommandEntry> loadActiveCommands();
     
     static std::vector<CommandEntry> loadCommands(const fs::path& path);
     static bool saveCommands(const fs::path& path, const std::vector<CommandEntry>& commands);

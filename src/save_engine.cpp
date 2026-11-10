@@ -25,7 +25,9 @@ static std::string resolveSaveDir() {
 
 std::string SaveEngine::getSavePath() {
     std::string dir = resolveSaveDir();
-    fs::create_directories(dir);
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    if (ec || !fs::is_directory(dir, ec) || ec) return {};
     return (fs::path(dir) / "save.bin").string();
 }
 
@@ -54,6 +56,7 @@ bool SaveEngine::validateState(const GameState& s) {
     if (s.def < 0 || s.def > 9999) return false;
     if (s.chanceToRun < 0 || s.chanceToRun > 100) return false;
     if (s.x < 0 || s.x >= 20 || s.y < 0 || s.y >= 20) return false;
+    if (s.difficulty != Difficulty::EASY && s.difficulty != Difficulty::HARD) return false;
     return true;
 }
 
@@ -67,14 +70,19 @@ bool SaveEngine::loadLegacy(const std::string& path, GameState& state) {
     
     SpatialManager::applyCrypto(buffer, 0xAA);
     std::memcpy(&state, buffer.data(), sizeof(GameState));
-    
-    if (!validateState(state)) return false;
+
+    // Legacy saves did not reliably persist difficulty. Migration has always
+    // normalized them to Easy, so do that before validating the new enum field.
     state.difficulty = Difficulty::EASY;
+    if (!validateState(state)) return false;
     return true;
 }
 
 bool SaveEngine::saveState(const GameState& state) {
+    if (!validateState(state)) return false;
+
     std::string path = getSavePath();
+    if (path.empty()) return false;
     std::string tmpPath = path + ".tmp";
     
     SaveFile file;
@@ -90,11 +98,15 @@ bool SaveEngine::saveState(const GameState& state) {
     
     FILE* fp = std::fopen(tmpPath.c_str(), "wb");
     if (!fp) return false;
-    std::fwrite(buffer.data(), 1, buffer.size(), fp);
-    std::fflush(fp);
+    bool writeOk = std::fwrite(buffer.data(), 1, buffer.size(), fp) == buffer.size();
+    if (std::fflush(fp) != 0) writeOk = false;
     int fd = fileno(fp);
-    if (fd >= 0) fsync(fd);
-    std::fclose(fp);
+    if (fd < 0 || fsync(fd) != 0) writeOk = false;
+    if (std::fclose(fp) != 0) writeOk = false;
+    if (!writeOk) {
+        std::remove(tmpPath.c_str());
+        return false;
+    }
     
     if (std::rename(tmpPath.c_str(), path.c_str()) != 0) {
         std::remove(tmpPath.c_str());
@@ -105,16 +117,19 @@ bool SaveEngine::saveState(const GameState& state) {
 
 bool SaveEngine::loadState(GameState& state) {
     std::string path = getSavePath();
+    if (path.empty()) return false;
     
     if (!fs::exists(path)) {
         std::string legacy = getLegacySavePath();
         if (fs::exists(legacy)) {
             GameState legacyState;
             if (loadLegacy(legacy, legacyState)) {
-                state = legacyState;
-                saveState(state);
-                std::remove(legacy.c_str());
-                return true;
+                if (saveState(legacyState)) {
+                    state = legacyState;
+                    std::remove(legacy.c_str());
+                    return true;
+                }
+                return false;
             }
         }
         return false;
@@ -143,8 +158,10 @@ bool SaveEngine::loadState(GameState& state) {
 
 bool SaveEngine::hasValidSave() {
     std::string path = getSavePath();
+    if (path.empty()) return false;
     if (!fs::exists(path)) {
-        return fs::exists(getLegacySavePath());
+        GameState legacyState;
+        return loadLegacy(getLegacySavePath(), legacyState);
     }
     
     std::ifstream in(path, std::ios::binary);
@@ -166,6 +183,7 @@ bool SaveEngine::hasValidSave() {
 }
 
 void SaveEngine::deleteSave() {
-    std::remove(getSavePath().c_str());
+    const std::string path = getSavePath();
+    if (!path.empty()) std::remove(path.c_str());
     std::remove(getLegacySavePath().c_str());
 }

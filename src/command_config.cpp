@@ -7,8 +7,139 @@
 #include <cstdlib>
 #include <filesystem>
 #include <algorithm>
+#include <array>
+#include <cerrno>
+#include <chrono>
+#include <csignal>
+#include <fcntl.h>
+#include <poll.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 namespace fs = std::filesystem;
+
+namespace {
+fs::path resolveAsset(const char* filename) {
+    const fs::path relative = fs::path("assets") / filename;
+    std::error_code ec;
+    if (fs::is_regular_file(relative, ec)) return relative;
+
+    // Resolve assets beside the executable for relocatable installs and builds
+    // launched from another working directory.
+    std::array<char, 4096> executable{};
+    const ssize_t length = readlink("/proc/self/exe", executable.data(), executable.size() - 1);
+    if (length > 0) {
+        const fs::path binDir = fs::path(std::string(executable.data(), static_cast<size_t>(length))).parent_path();
+        const std::array<fs::path, 3> candidates = {
+            binDir / relative,
+            binDir / ".." / relative,
+            binDir / ".." / "share" / "obsfuria" / relative
+        };
+        for (const auto& candidate : candidates) {
+            ec.clear();
+            if (fs::is_regular_file(candidate, ec)) return candidate;
+        }
+    }
+    return relative;
+}
+
+bool samePath(const fs::path& first, const fs::path& second) {
+    std::error_code firstError;
+    std::error_code secondError;
+    const fs::path absoluteFirst = fs::absolute(first, firstError).lexically_normal();
+    const fs::path absoluteSecond = fs::absolute(second, secondError).lexically_normal();
+    return !firstError && !secondError && absoluteFirst == absoluteSecond;
+}
+
+std::string rawStringLiteral(const std::string& value) {
+    std::string delimiter = "obsfuria";
+    for (unsigned int suffix = 0;
+        value.find(")" + delimiter + "\"") != std::string::npos;
+        ++suffix) {
+        delimiter = "obsfuria" + std::to_string(suffix);
+    }
+    return "R\"" + delimiter + "(" + value + ")" + delimiter + "\"";
+}
+
+std::string captureCommand(const std::string& command,
+                           std::chrono::steady_clock::time_point deadline) {
+    constexpr size_t maxBytes = 16 * 1024;
+    constexpr size_t maxLines = 25;
+    int pipeFds[2];
+    if (pipe(pipeFds) != 0) return {};
+
+    const pid_t child = fork();
+    if (child < 0) {
+        close(pipeFds[0]);
+        close(pipeFds[1]);
+        return {};
+    }
+    if (child == 0) {
+        close(pipeFds[0]);
+        setpgid(0, 0);
+        dup2(pipeFds[1], STDOUT_FILENO);
+        close(pipeFds[1]);
+        execl("/bin/sh", "sh", "-c", command.c_str(), static_cast<char*>(nullptr));
+        _exit(127);
+    }
+
+    close(pipeFds[1]);
+    setpgid(child, child);
+    const int oldFlags = fcntl(pipeFds[0], F_GETFL, 0);
+    if (oldFlags >= 0) fcntl(pipeFds[0], F_SETFL, oldFlags | O_NONBLOCK);
+
+    std::string output;
+    size_t lines = 0;
+    bool pipeClosed = false;
+    bool childExited = false;
+    bool hitLimit = false;
+    char buffer[1024];
+    while (!(pipeClosed && childExited) && !hitLimit &&
+           std::chrono::steady_clock::now() < deadline) {
+        pollfd descriptor{pipeFds[0], POLLIN | POLLHUP, 0};
+        const int ready = pipeClosed ? poll(nullptr, 0, 50) : poll(&descriptor, 1, 50);
+        if (ready < 0 && errno != EINTR) break;
+        if (!pipeClosed && ready > 0 && (descriptor.revents & (POLLIN | POLLHUP))) {
+            while (true) {
+                const ssize_t count = read(pipeFds[0], buffer, sizeof(buffer));
+                if (count <= 0) {
+                    if (count == 0) pipeClosed = true;
+                    else if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) pipeClosed = true;
+                    break;
+                }
+                for (ssize_t i = 0; i < count && output.size() < maxBytes; ++i) {
+                    const char c = buffer[i];
+                    output += c;
+                    if (c == '\n' && ++lines >= maxLines) {
+                        hitLimit = true;
+                        break;
+                    }
+                }
+                if (output.size() >= maxBytes || hitLimit) {
+                    hitLimit = true;
+                    break;
+                }
+            }
+        }
+        siginfo_t childInfo{};
+        if (waitid(P_PID, static_cast<id_t>(child), &childInfo,
+                   WEXITED | WNOHANG | WNOWAIT) == 0 && childInfo.si_pid == child) {
+            childExited = true;
+        }
+    }
+
+    close(pipeFds[0]);
+    // A command can leave background children behind after its stdout closes.
+    // Keep the leader unreaped until its process group has been stopped so its
+    // process-group ID cannot be reused in between.
+    kill(-child, SIGKILL);
+    if (!childExited) kill(child, SIGKILL);
+    int status = 0;
+    while (waitpid(child, &status, 0) < 0 && errno == EINTR) {}
+    return output;
+}
+}
 
 fs::path CommandConfig::getConfigPath() {
     const char* xdgConfig = std::getenv("XDG_CONFIG_HOME");
@@ -22,12 +153,64 @@ fs::path CommandConfig::getConfigPath() {
     return "./obsfuria_commands.conf";
 }
 
+fs::path CommandConfig::getUserListPath() {
+    return getConfigPath();
+}
+
+fs::path CommandConfig::getActiveListPath() {
+    fs::path path = getConfigPath();
+    path += ".active";
+    return path;
+}
+
+CommandConfig::List CommandConfig::getActiveList() {
+    const fs::path activePath = getActiveListPath();
+    std::ifstream in(activePath);
+    std::string value;
+    if (in >> value) {
+        if (value == "USER") return List::USER;
+        if (value == "SAFE") return List::SAFE;
+        setActiveList(List::SAFE);
+        return List::SAFE;
+    }
+
+    // Before the selector existed, commands.conf itself represented the
+    // active list. Persist the one-time migration before later edits can
+    // create a new commands.conf and accidentally make it look legacy.
+    std::error_code ec;
+    const bool selectorExists = fs::exists(activePath, ec);
+    const List inferred = !ec && fs::is_regular_file(getUserListPath(), ec)
+        ? List::USER : List::SAFE;
+    const List selected = selectorExists || ec ? List::SAFE : inferred;
+    setActiveList(selected);
+    return selected;
+}
+
+bool CommandConfig::setActiveList(List list) {
+    const fs::path path = getActiveListPath();
+    if (!path.parent_path().empty()) {
+        std::error_code ec;
+        fs::create_directories(path.parent_path(), ec);
+        if (ec) return false;
+    }
+    std::ofstream out(path, std::ios::trunc);
+    if (!out) return false;
+    out << (list == List::USER ? "USER\n" : "SAFE\n");
+    out.close();
+    return !out.fail();
+}
+
+std::vector<CommandEntry> CommandConfig::loadActiveCommands() {
+    if (getActiveList() == List::USER) return loadCommands(getUserListPath());
+    return getDefaultCommands();
+}
+
 fs::path CommandConfig::getDefaultAssetPath() {
-    return "assets/default_commands.txt";
+    return resolveAsset("default_commands.txt");
 }
 
 fs::path CommandConfig::getCrazyAssetPath() {
-    return "assets/crazy_commands.txt";
+    return resolveAsset("crazy_commands.txt");
 }
 
 std::vector<CommandEntry> CommandConfig::loadCommands(const fs::path& path) {
@@ -59,7 +242,14 @@ std::vector<CommandEntry> CommandConfig::loadCommands(const fs::path& path) {
 }
 
 bool CommandConfig::saveCommands(const fs::path& path, const std::vector<CommandEntry>& commands) {
-    fs::create_directories(path.parent_path());
+    if (samePath(path, getUserListPath())) {
+        // Initialize/migrate the selector before creating the user file.
+        // Otherwise a new list can be mistaken for a pre-selector legacy list.
+        (void)getActiveList();
+        std::error_code ec;
+        if (!fs::is_regular_file(getActiveListPath(), ec)) return false;
+    }
+    if (!path.parent_path().empty()) fs::create_directories(path.parent_path());
     std::ofstream out(path);
     if (!out) return false;
     for (const auto& e : commands) {
@@ -78,14 +268,13 @@ std::vector<CommandEntry> CommandConfig::getCrazyCommands() {
 
 std::map<std::string, std::string> CommandConfig::buildArsenalMap(const std::vector<CommandEntry>& commands) {
     std::map<std::string, std::string> arsenal;
+    const auto totalDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(40);
     for (const auto& e : commands) {
-        std::string output;
-        FILE* fp = popen(e.executeCmd.c_str(), "r");
-        if (fp) {
-            char buf[256];
-            while (fgets(buf, sizeof(buf), fp)) output += buf;
-            pclose(fp);
-        }
+        const auto commandDeadline = std::min(totalDeadline,
+            std::chrono::steady_clock::now() + std::chrono::seconds(1));
+        std::string output = std::chrono::steady_clock::now() < totalDeadline
+            ? captureCommand(e.executeCmd, commandDeadline)
+            : std::string{};
         if (output.empty()) {
             output = "bash: " + e.executeCmd.substr(0, e.executeCmd.find(' ')) + ": command not found or output restricted.";
         }
@@ -119,9 +308,8 @@ bool CommandConfig::regenerateArsenal(const std::vector<CommandEntry>& commands)
     out << "        static const std::map<std::string, std::string> commands = {\n";
     
     for (const auto& [name, output] : arsenal) {
-        out << "            {\"" << name << "\", R\"obsfuria(";
-        out << output;
-        out << ")obsfuria\"},\n";
+        out << "            {" << rawStringLiteral(name) << ", ";
+        out << rawStringLiteral(output) << "},\n";
     }
     
     out << "        };\n";

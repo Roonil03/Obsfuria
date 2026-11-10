@@ -7,6 +7,7 @@ SRC_DIR = src
 OBJ_DIR = obj
 BIN_DIR = bin
 TEST_DIR = tests
+PREFIX ?= /usr/local
 
 CPP_SRCS = $(wildcard $(SRC_DIR)/*.cpp)
 CPP_OBJS = $(patsubst $(SRC_DIR)/%.cpp, $(OBJ_DIR)/%.o, $(CPP_SRCS))
@@ -24,24 +25,29 @@ TEST_TARGET3 = $(BIN_DIR)/phase3_test
 TEST_TARGET4 = $(BIN_DIR)/phase4_test
 TEST_TARGET5 = $(BIN_DIR)/phase5_test
 TEST_TARGET6 = $(BIN_DIR)/phase6_test
+TEST_COMMAND_CONFIG = $(BIN_DIR)/command_config_test
 
 ARSENAL_HPP = include/arsenal.hpp
 
 all: dirs $(ARSENAL_HPP) $(TARGET)
 
 install: all
-	rm -f /usr/local/bin/obsfuria
-	cp $(TARGET) /usr/local/bin/obsfuria
-	chmod +x /usr/local/bin/obsfuria
+	install -Dm755 $(TARGET) $(DESTDIR)$(PREFIX)/bin/obsfuria
+	install -Dm644 assets/default_commands.txt $(DESTDIR)$(PREFIX)/share/obsfuria/assets/default_commands.txt
+	install -Dm644 assets/crazy_commands.txt $(DESTDIR)$(PREFIX)/share/obsfuria/assets/crazy_commands.txt
 	@if [ -n "$${SUDO_USER}" ]; then rm -f /home/$${SUDO_USER}/.local/bin/obsfuria; fi
 	@rm -f $${HOME}/.local/bin/obsfuria
-	@echo "Installed to /usr/local/bin/obsfuria"
+	@echo "Installed to $(DESTDIR)$(PREFIX)/bin/obsfuria"
 
 dirs:
 	mkdir -p $(OBJ_DIR) $(BIN_DIR)
 
 $(ARSENAL_HPP):
 	bash ./scripts/add_commands.sh
+
+# These translation units include the generated header; make the dependency
+# explicit so parallel builds cannot compile them while the generator writes it.
+$(OBJ_DIR)/exec_mock.o $(OBJ_DIR)/game_loop.o: $(ARSENAL_HPP)
 
 $(TARGET): $(CPP_OBJS) $(ASM_OBJS)
 	$(CXX) $(CXXFLAGS) -o $@ $^
@@ -52,28 +58,31 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.asm
 	$(ASM) $(ASMFLAGS) $< -o $@
 
-$(TEST_TARGET0): $(TEST_DIR)/phase0_test.cpp $(OBJ_DIR)/terminal.o
+$(TEST_TARGET0): $(TEST_DIR)/phase0_test.cpp $(OBJ_DIR)/terminal.o | dirs
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
-$(TEST_TARGET1): $(TEST_DIR)/phase1_test.cpp $(ARSENAL_HPP)
+$(TEST_TARGET1): $(TEST_DIR)/phase1_test.cpp $(ARSENAL_HPP) | dirs
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
-$(TEST_TARGET2): $(TEST_DIR)/phase2_test.cpp $(OBJ_DIR)/spatial_manager.o $(ASM_OBJS)
+$(TEST_TARGET2): $(TEST_DIR)/phase2_test.cpp $(OBJ_DIR)/spatial_manager.o $(ASM_OBJS) | dirs
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
-$(TEST_TARGET3): $(TEST_DIR)/phase3_test.cpp $(OBJ_DIR)/sprite_gen.o $(OBJ_DIR)/ui_renderer.o $(OBJ_DIR)/sanitizer.o
+$(TEST_TARGET3): $(TEST_DIR)/phase3_test.cpp $(OBJ_DIR)/sprite_gen.o $(OBJ_DIR)/ui_renderer.o $(OBJ_DIR)/sanitizer.o | dirs
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
-$(TEST_TARGET4): $(TEST_DIR)/phase4_test.cpp $(OBJ_DIR)/stat_calc.o $(OBJ_DIR)/reward_system.o $(OBJ_DIR)/terminal.o $(OBJ_DIR)/ui_renderer.o
+$(TEST_TARGET4): $(TEST_DIR)/phase4_test.cpp $(OBJ_DIR)/stat_calc.o $(OBJ_DIR)/reward_system.o $(OBJ_DIR)/terminal.o $(OBJ_DIR)/ui_renderer.o | dirs
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
-$(TEST_TARGET5): $(TEST_DIR)/phase5_test.cpp $(OBJ_DIR)/exec_mock.o $(OBJ_DIR)/err_simulate.o $(OBJ_DIR)/terminal.o $(OBJ_DIR)/save_engine.o $(OBJ_DIR)/spatial_manager.o $(ASM_OBJS) $(ARSENAL_HPP)
+$(TEST_TARGET5): $(TEST_DIR)/phase5_test.cpp $(OBJ_DIR)/exec_mock.o $(OBJ_DIR)/err_simulate.o $(OBJ_DIR)/terminal.o $(OBJ_DIR)/save_engine.o $(OBJ_DIR)/spatial_manager.o $(ASM_OBJS) $(ARSENAL_HPP) | dirs
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
-$(TEST_TARGET6): $(TEST_DIR)/phase6_test.cpp $(OBJ_DIR)/save_engine.o $(OBJ_DIR)/spatial_manager.o $(ASM_OBJS)
+$(TEST_TARGET6): $(TEST_DIR)/phase6_test.cpp $(OBJ_DIR)/save_engine.o $(OBJ_DIR)/spatial_manager.o $(ASM_OBJS) | dirs
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
-test: $(TEST_TARGET0) $(TEST_TARGET1) $(TEST_TARGET2) $(TEST_TARGET3) $(TEST_TARGET4) $(TEST_TARGET5) $(TEST_TARGET6)
+$(TEST_COMMAND_CONFIG): $(TEST_DIR)/command_config_test.cpp $(OBJ_DIR)/command_config.o | dirs
+	$(CXX) $(CXXFLAGS) -o $@ $^
+
+test: $(TEST_TARGET0) $(TEST_TARGET1) $(TEST_TARGET2) $(TEST_TARGET3) $(TEST_TARGET4) $(TEST_TARGET5) $(TEST_TARGET6) $(TEST_COMMAND_CONFIG)
 
 uninstall:
 	rm -f /usr/local/bin/obsfuria
