@@ -7,7 +7,7 @@ Thank you for your interest in contributing! This document outlines the process 
 1. **Fork** the repository
 2. **Clone** your fork: `git clone https://github.com/your-username/Obsfuria.git`
 3. **Create a feature branch**: `git checkout -b feature/YourFeatureName`
-4. **Build & test**: `make && make test`
+4. **Build and verify**: Follow the verification steps below.
 5. **Make your changes**
 6. **Commit**: `git commit -m 'Add YourFeatureName'`
 7. **Push**: `git push origin feature/YourFeatureName`
@@ -35,12 +35,24 @@ Enemies are command names from the arsenal. To add new enemies:
    - Follow the game's enemy naming convention: non-alphanumeric names or C-error style names (for example, "Segmentation Fault" or "Stack Overflow").
    - The generator chooses safe C++ string delimiters automatically; do not edit generated `include/arsenal.hpp` by hand.
 
-## Adding New Phases/Tests
+## Verifying a change
 
-1. Create `tests/phaseN_test.cpp` following existing patterns
-2. Add build rule to `Makefile` with correct object dependencies
-3. Avoid `Terminal::readKey()` in tests (blocks CI)
-4. Run `make test` to build and execute the existing test programs
+Use an external scratch directory to build the committed revision. The phase
+test sources are maintained locally. If you have them, copy the local
+`tests/` directory beside the scratch Makefile before running `make test`.
+
+```bash
+scratch=$(mktemp -d)
+git archive HEAD | tar -x -C "$scratch"
+if [ -d tests ]; then cp -R tests "$scratch/"; fi
+mkdir "$scratch/home"
+(cd "$scratch" && bash scripts/add_commands.sh && make -j4)
+(cd "$scratch" && HOME="$scratch/home" XDG_CONFIG_HOME="$scratch/home/config" XDG_DATA_HOME="$scratch/home/data" ./bin/Obsfuria)
+```
+
+Use a terminal for the game. Start an Easy game, quit to the menu with Q and
+select Continue. With the local suite available, also run
+`(cd "$scratch" && HOME="$scratch/home" XDG_CONFIG_HOME="$scratch/home/config" XDG_DATA_HOME="$scratch/home/data" make test)`.
 
 ## Architecture Notes
 
