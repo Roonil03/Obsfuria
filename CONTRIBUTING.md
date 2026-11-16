@@ -38,7 +38,7 @@ Enemies are command names from the arsenal. To add new enemies:
 ## Verifying a change
 
 Use an external scratch directory to build the current tracked files, including
-local edits. The phase
+local edits. Stage any new source files first so Git includes them in the copy. The phase
 test sources are maintained locally. If you have them, copy the local
 `tests/` directory beside the scratch Makefile before running `make test`.
 

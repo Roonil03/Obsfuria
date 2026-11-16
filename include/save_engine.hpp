@@ -32,6 +32,7 @@ public:
 
     enum class LoadOutcome {
         LOADED,
+        LOADED_DURABILITY_UNCERTAIN,
         MISSING,
         INVALID,
         INACCESSIBLE,

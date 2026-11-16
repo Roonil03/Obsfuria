@@ -1,8 +1,9 @@
 #include "spatial_manager.hpp"
+#include <cstddef>
 
 extern "C" {
     unsigned int safe_nasm_spatial_hash(int x, int y, unsigned int tableSize);
-    void nasm_xor_encrypt_decrypt(uint8_t* buffer, unsigned int len, uint8_t key);
+    void nasm_xor_encrypt_decrypt(uint8_t* buffer, std::size_t len, uint8_t key);
 }
 
 unsigned int SpatialManager::calculateHash(int x, int y, unsigned int tableSize) {

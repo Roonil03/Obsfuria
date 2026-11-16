@@ -9,6 +9,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fcntl.h>
+#include <pwd.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
@@ -37,10 +38,21 @@ static_assert(sizeof(LegacySaveFile) == kSaveSize, "legacy v1 save layout change
 
 std::string resolveSaveDir() {
     const char* xdgData = std::getenv("XDG_DATA_HOME");
-    if (xdgData && *xdgData) return (fs::path(xdgData) / "obsfuria").string();
+    if (xdgData && fs::path(xdgData).is_absolute()) return (fs::path(xdgData) / "obsfuria").string();
     const char* home = std::getenv("HOME");
-    if (home && *home) return (fs::path(home) / ".local" / "share" / "obsfuria").string();
+    if (home && fs::path(home).is_absolute()) return (fs::path(home) / ".local" / "share" / "obsfuria").string();
+    const passwd* account = getpwuid(getuid());
+    if (account && account->pw_dir && fs::path(account->pw_dir).is_absolute()) {
+        return (fs::path(account->pw_dir) / ".local" / "share" / "obsfuria").string();
+    }
     return {};
+}
+
+bool sameFileVersion(const struct stat& first, const struct stat& second) {
+    return first.st_dev == second.st_dev && first.st_ino == second.st_ino &&
+           first.st_size == second.st_size && first.st_mtim.tv_sec == second.st_mtim.tv_sec &&
+           first.st_mtim.tv_nsec == second.st_mtim.tv_nsec &&
+           first.st_ctim.tv_sec == second.st_ctim.tv_sec && first.st_ctim.tv_nsec == second.st_ctim.tv_nsec;
 }
 
 void putU16(std::vector<uint8_t>& out, std::size_t at, uint16_t value) {
@@ -63,8 +75,10 @@ uint32_t getU32(const std::vector<uint8_t>& in, std::size_t at) {
 }
 
 bool readExactRegularFile(const std::string& path, std::vector<uint8_t>& bytes,
-                          SaveEngine::LoadOutcome& outcome) {
-    const int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+                          SaveEngine::LoadOutcome& outcome, struct stat* identity = nullptr) {
+    outcome = SaveEngine::LoadOutcome::INACCESSIBLE;
+    // A FIFO must be rejected by fstat without waiting for a writer first.
+    const int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
     if (fd < 0) {
         outcome = errno == ENOENT ? SaveEngine::LoadOutcome::MISSING :
                   (errno == ELOOP ? SaveEngine::LoadOutcome::INVALID : SaveEngine::LoadOutcome::INACCESSIBLE);
@@ -99,19 +113,41 @@ bool readExactRegularFile(const std::string& path, std::vector<uint8_t>& bytes,
         } while (count < 0 && errno == EINTR);
         ok = count == 0;
     }
+    struct stat finalInfo {};
+    if (ok) ok = fstat(fd, &finalInfo) == 0 && sameFileVersion(info, finalInfo);
     const int savedErrno = errno;
     if (close(fd) != 0) ok = false;
     errno = savedErrno;
-    if (ok) outcome = SaveEngine::LoadOutcome::LOADED;
+    if (ok) {
+        if (identity) *identity = finalInfo;
+        outcome = SaveEngine::LoadOutcome::LOADED;
+    }
     else if (outcome != SaveEngine::LoadOutcome::INVALID && outcome != SaveEngine::LoadOutcome::INACCESSIBLE)
         outcome = SaveEngine::LoadOutcome::INACCESSIBLE;
     return ok;
 }
 
-bool hasRegularOrMissingTarget(int dirFd) {
-    struct stat info {};
-    if (fstatat(dirFd, kSaveName, &info, AT_SYMLINK_NOFOLLOW) == 0) return S_ISREG(info.st_mode);
-    return errno == ENOENT;
+void removeSameFile(const std::string& path, const struct stat& identity) {
+    const fs::path filePath(path);
+    const std::string parent = filePath.parent_path().empty() ? "." : filePath.parent_path().string();
+    const int dirFd = open(parent.c_str(), O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW);
+    if (dirFd < 0) return;
+    const std::string name = filePath.filename().string();
+    struct stat current {};
+    // A file replaced or edited since validation belongs to its new writer.
+    if (fstatat(dirFd, name.c_str(), &current, AT_SYMLINK_NOFOLLOW) == 0 &&
+        S_ISREG(current.st_mode) && sameFileVersion(identity, current)) {
+        if (unlinkat(dirFd, name.c_str(), 0) == 0) (void)fsync(dirFd);
+    }
+    close(dirFd);
+}
+
+bool targetUnchanged(int dirFd, bool existed, const struct stat& identity) {
+    struct stat current {};
+    if (fstatat(dirFd, kSaveName, &current, AT_SYMLINK_NOFOLLOW) == 0) {
+        return existed && S_ISREG(current.st_mode) && sameFileVersion(identity, current);
+    }
+    return !existed && errno == ENOENT;
 }
 
 bool decodeV2(std::vector<uint8_t> bytes, GameState& state) {
@@ -153,6 +189,23 @@ bool decodeV1(const std::vector<uint8_t>& encrypted, GameState& state) {
     return true;
 }
 
+bool readRawLegacy(const std::string& path, GameState& state, SaveEngine::LoadOutcome& outcome,
+                   struct stat* identity = nullptr) {
+    std::vector<uint8_t> bytes(sizeof(GameState));
+    if (!readExactRegularFile(path, bytes, outcome, identity)) return false;
+    SpatialManager::applyCrypto(bytes, 0xAA);
+    GameState parsed{};
+    std::memcpy(&parsed, bytes.data(), sizeof(parsed));
+    // Original raw saves did not have a stable difficulty value.
+    parsed.difficulty = Difficulty::EASY;
+    if (!SaveEngine::validateState(parsed)) {
+        outcome = SaveEngine::LoadOutcome::INVALID;
+        return false;
+    }
+    state = parsed;
+    return true;
+}
+
 std::vector<uint8_t> encodeV2(const GameState& state) {
     std::vector<uint8_t> bytes(kSaveSize, 0);
     std::copy(kFormatMagic.begin(), kFormatMagic.end(), bytes.begin());
@@ -185,13 +238,18 @@ bool writeAll(int fd, const std::vector<uint8_t>& bytes) {
 }
 
 bool writeAtomically(const std::string& path, const std::vector<uint8_t>& bytes,
-                     SaveEngine::SaveOutcome& outcome) {
+                     SaveEngine::SaveOutcome& outcome, const struct stat* expected = nullptr,
+                     bool requireMissing = false) {
     outcome = SaveEngine::SaveOutcome::FAILED_BEFORE_RENAME;
     const fs::path savePath(path);
     const std::string directory = savePath.parent_path().empty() ? "." : savePath.parent_path().string();
     const int dirFd = open(directory.c_str(), O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW);
     if (dirFd < 0) return false;
-    if (!hasRegularOrMissingTarget(dirFd)) {
+    struct stat original {};
+    const bool existed = fstatat(dirFd, kSaveName, &original, AT_SYMLINK_NOFOLLOW) == 0;
+    if ((existed && (!S_ISREG(original.st_mode) || requireMissing)) ||
+        (!existed && errno != ENOENT) ||
+        (expected && (!existed || !sameFileVersion(*expected, original)))) {
         close(dirFd);
         return false;
     }
@@ -217,13 +275,14 @@ bool writeAtomically(const std::string& path, const std::vector<uint8_t>& bytes,
     if (close(tempFd) != 0) ok = false;
     bool renamed = false;
     if (ok) {
-        if (renameat(dirFd, tempName.c_str(), dirFd, kSaveName) != 0) ok = false;
+        if (!targetUnchanged(dirFd, existed, original) ||
+            renameat(dirFd, tempName.c_str(), dirFd, kSaveName) != 0) ok = false;
         else renamed = true;
     }
     if (renamed && fsync(dirFd) != 0) ok = false;
     if (renamed) outcome = ok ? SaveEngine::SaveOutcome::SUCCESS :
                                 SaveEngine::SaveOutcome::INSTALLED_DURABILITY_UNCERTAIN;
-    if (!ok) unlinkat(dirFd, tempName.c_str(), 0);
+    if (!renamed) unlinkat(dirFd, tempName.c_str(), 0);
     close(dirFd);
     return ok;
 }
@@ -231,7 +290,8 @@ bool writeAtomically(const std::string& path, const std::vector<uint8_t>& bytes,
 bool loadNewSave(const std::string& path, GameState& state, bool migrateV1,
                  SaveEngine::LoadOutcome& outcome) {
     std::vector<uint8_t> bytes(kSaveSize);
-    if (!readExactRegularFile(path, bytes, outcome)) return false;
+    struct stat identity {};
+    if (!readExactRegularFile(path, bytes, outcome, &identity)) return false;
     GameState parsed;
     if (decodeV2(bytes, parsed)) {
         state = parsed;
@@ -244,9 +304,14 @@ bool loadNewSave(const std::string& path, GameState& state, bool migrateV1,
     }
     if (migrateV1) {
         SaveEngine::SaveOutcome writeOutcome;
-        if (!writeAtomically(path, encodeV2(parsed), writeOutcome)) {
-            outcome = SaveEngine::LoadOutcome::MIGRATION_FAILED;
-            return false;
+        if (!writeAtomically(path, encodeV2(parsed), writeOutcome, &identity)) {
+            if (writeOutcome != SaveEngine::SaveOutcome::INSTALLED_DURABILITY_UNCERTAIN) {
+                outcome = SaveEngine::LoadOutcome::MIGRATION_FAILED;
+                return false;
+            }
+            state = parsed;
+            outcome = SaveEngine::LoadOutcome::LOADED_DURABILITY_UNCERTAIN;
+            return true;
         }
     }
     state = parsed;
@@ -293,19 +358,7 @@ bool SaveEngine::validateState(const GameState& state) {
 }
 
 bool SaveEngine::loadLegacy(const std::string& path, GameState& state) {
-    std::vector<uint8_t> bytes(sizeof(GameState));
-    if (!readExactRegularFile(path, bytes, loadOutcome)) return false;
-    SpatialManager::applyCrypto(bytes, 0xAA);
-    GameState parsed{};
-    std::memcpy(&parsed, bytes.data(), sizeof(parsed));
-    // Original raw saves did not have a stable difficulty value.
-    parsed.difficulty = Difficulty::EASY;
-    if (!validateState(parsed)) {
-        loadOutcome = LoadOutcome::INVALID;
-        return false;
-    }
-    state = parsed;
-    return true;
+    return readRawLegacy(path, state, loadOutcome);
 }
 
 bool SaveEngine::saveState(const GameState& state) {
@@ -332,16 +385,20 @@ bool SaveEngine::loadState(GameState& state) {
 
     GameState legacyState;
     const std::string legacyPath = getLegacySavePath();
-    if (!loadLegacy(legacyPath, legacyState)) return false;
-    if (!saveState(legacyState)) {
-        loadOutcome = LoadOutcome::MIGRATION_FAILED;
-        return false;
+    struct stat legacyInfo {};
+    if (!readRawLegacy(legacyPath, legacyState, loadOutcome, &legacyInfo)) return false;
+    if (!writeAtomically(path, encodeV2(legacyState), saveOutcome, nullptr, true)) {
+        if (saveOutcome != SaveOutcome::INSTALLED_DURABILITY_UNCERTAIN) {
+            loadOutcome = LoadOutcome::MIGRATION_FAILED;
+            return false;
+        }
+        state = legacyState;
+        loadOutcome = LoadOutcome::LOADED_DURABILITY_UNCERTAIN;
+        return true;
     }
     state = legacyState;
-    // Only remove the legacy file after the migrated save is durable and only
-    // when it is still a regular file (never unlink through a symlink).
-    struct stat legacyInfo {};
-    if (lstat(legacyPath.c_str(), &legacyInfo) == 0 && S_ISREG(legacyInfo.st_mode)) unlink(legacyPath.c_str());
+    // Retain a source replaced or edited while the migrated save was written.
+    removeSameFile(legacyPath, legacyInfo);
     loadOutcome = LoadOutcome::LOADED;
     return true;
 }
@@ -372,10 +429,20 @@ bool SaveEngine::hasValidSave() {
 void SaveEngine::deleteSave() {
     const std::string path = getSavePath();
     if (!path.empty()) {
-        struct stat info {};
-        if (lstat(path.c_str(), &info) == 0 && S_ISREG(info.st_mode)) unlink(path.c_str());
+        std::vector<uint8_t> bytes(kSaveSize);
+        struct stat identity {};
+        LoadOutcome ignored = LoadOutcome::MISSING;
+        GameState parsed;
+        if (readExactRegularFile(path, bytes, ignored, &identity) &&
+            (decodeV2(bytes, parsed) || decodeV1(bytes, parsed))) removeSameFile(path, identity);
     }
-    const std::string legacy = getLegacySavePath();
+    // A new run may supersede a recognized raw legacy save without loading it.
+    // Retire it on death/reset so it cannot resurrect after the current save is removed.
+    GameState legacy;
     struct stat legacyInfo {};
-    if (lstat(legacy.c_str(), &legacyInfo) == 0 && S_ISREG(legacyInfo.st_mode)) unlink(legacy.c_str());
+    LoadOutcome ignored = LoadOutcome::MISSING;
+    const std::string legacyPath = getLegacySavePath();
+    if (readRawLegacy(legacyPath, legacy, ignored, &legacyInfo)) {
+        removeSameFile(legacyPath, legacyInfo);
+    }
 }
