@@ -37,13 +37,14 @@ Enemies are command names from the arsenal. To add new enemies:
 
 ## Verifying a change
 
-Use an external scratch directory to build the committed revision. The phase
+Use an external scratch directory to build the current tracked files, including
+local edits. The phase
 test sources are maintained locally. If you have them, copy the local
 `tests/` directory beside the scratch Makefile before running `make test`.
 
 ```bash
 scratch=$(mktemp -d)
-git archive HEAD | tar -x -C "$scratch"
+git ls-files --cached --deduplicate -z | tar --null -T - -cf - | tar -xf - -C "$scratch"
 if [ -d tests ]; then cp -R tests "$scratch/"; fi
 mkdir "$scratch/home"
 (cd "$scratch" && bash scripts/add_commands.sh && make -j4)

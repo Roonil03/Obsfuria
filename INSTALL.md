@@ -1,10 +1,10 @@
 # Installation Instructions
 
 ## Prerequisites
-- `g++` (C++17 support, GCC 9+ or Clang 10+)
+- x86-64 Linux and a C++17 compiler (the Makefile defaults to `g++`)
 - `nasm` (Netwide Assembler, 2.14+)
 - `make` (GNU Make)
-- Optional: `x-terminal-emulator` / `xterm` / `gnome-terminal` (for crash simulation), `tree`, `cowsay`, `fortune` (for full command arsenal)
+- An interactive terminal for playing
 
 ## Quick Start (Development)
 ```bash
@@ -40,7 +40,8 @@ the files installed by this project.
 ## Command Arsenal Configuration
 The game provides a curated **Safe List** with fixed mock output and an editable **User List**. The
 User List contains `name|command` entries and supports adding commands or
-importing a file from the in-game menu.
+importing a file from the in-game menu. Command files may contain up to 1 MiB.
+An unreadable or malformed file must be corrected before editing it in the menu.
 
 Commands in a user-provided list can perform actions allowed to your user
 account when the game captures their output. Only add commands you trust.
@@ -57,8 +58,9 @@ menu displays its current path as a clickable terminal link. Build generation
 uses the bundled default command data, not a user-provided list.
 
 ## Save Files
-Game state saves to the XDG path: `~/.local/share/obsfuria/save.bin`
-Legacy `./save.bin` auto-migrates on first run.
+The game saves to `$XDG_DATA_HOME/obsfuria/save.bin` when the data directory
+is absolute, otherwise to `~/.local/share/obsfuria/save.bin`. Selecting Continue
+migrates a recognized legacy `./save.bin` when the current save is missing.
 Saves use fixed, versioned fields. CRC detects accidental changes; XOR only
 obfuscates bytes. Neither encrypts or authenticates save data.
 Existing version-1 saves migrate when loaded. Concurrent writers publish
@@ -67,6 +69,6 @@ sync fails after rename, the save is installed but its durability is uncertain.
 
 ## Troubleshooting
 - `make` fails with `arsenal.hpp not found`: Run `bash ./scripts/add_commands.sh` first
-- `nasm: command not found`: Install nasm package (`apt install nasm` / `brew install nasm`)
+- `nasm: command not found`: Install nasm package (for example, `apt install nasm` on Debian or Ubuntu)
 - Game won't start: Requires interactive TTY (not suitable for CI/headless)
 - Save not found after install: Run from same user, saves are per-user in XDG dirs

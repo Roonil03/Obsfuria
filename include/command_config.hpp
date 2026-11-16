@@ -16,6 +16,7 @@ struct CommandEntry {
 class CommandConfig {
 public:
     enum class List { SAFE, USER };
+    enum class LoadOutcome { OK, MISSING, INVALID, INACCESSIBLE };
 
     static fs::path getConfigPath();
     static fs::path getUserListPath();
@@ -28,12 +29,12 @@ public:
     static std::vector<CommandEntry> loadActiveCommands();
     
     static std::vector<CommandEntry> loadCommands(const fs::path& path);
+    static LoadOutcome loadCommands(const fs::path& path, std::vector<CommandEntry>& commands);
     static bool saveCommands(const fs::path& path, const std::vector<CommandEntry>& commands);
     static std::vector<CommandEntry> getDefaultCommands();
     static std::vector<CommandEntry> getCrazyCommands();
     static std::string escapeForDisplay(const std::string& value);
     
-    static bool regenerateArsenal(const std::vector<CommandEntry>& commands);
     static std::map<std::string, std::string> buildArsenalMap(const std::vector<CommandEntry>& commands);
 };
 
