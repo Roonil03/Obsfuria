@@ -9,8 +9,11 @@
 #include <cstring>
 #include <filesystem>
 #include <fcntl.h>
+#include <linux/fs.h>
 #include <pwd.h>
+#include <sys/file.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 #include <vector>
 
@@ -53,6 +56,12 @@ bool sameFileVersion(const struct stat& first, const struct stat& second) {
            first.st_size == second.st_size && first.st_mtim.tv_sec == second.st_mtim.tv_sec &&
            first.st_mtim.tv_nsec == second.st_mtim.tv_nsec &&
            first.st_ctim.tv_sec == second.st_ctim.tv_sec && first.st_ctim.tv_nsec == second.st_ctim.tv_nsec;
+}
+
+bool lockDirectory(int fd) {
+    int result;
+    do { result = flock(fd, LOCK_EX); } while (result != 0 && errno == EINTR);
+    return result == 0;
 }
 
 void putU16(std::vector<uint8_t>& out, std::size_t at, uint16_t value) {
@@ -132,6 +141,10 @@ void removeSameFile(const std::string& path, const struct stat& identity) {
     const std::string parent = filePath.parent_path().empty() ? "." : filePath.parent_path().string();
     const int dirFd = open(parent.c_str(), O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW);
     if (dirFd < 0) return;
+    if (!lockDirectory(dirFd)) {
+        close(dirFd);
+        return;
+    }
     const std::string name = filePath.filename().string();
     struct stat current {};
     // A file replaced or edited since validation belongs to its new writer.
@@ -245,6 +258,10 @@ bool writeAtomically(const std::string& path, const std::vector<uint8_t>& bytes,
     const std::string directory = savePath.parent_path().empty() ? "." : savePath.parent_path().string();
     const int dirFd = open(directory.c_str(), O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW);
     if (dirFd < 0) return false;
+    if (!lockDirectory(dirFd)) {
+        close(dirFd);
+        return false;
+    }
     struct stat original {};
     const bool existed = fstatat(dirFd, kSaveName, &original, AT_SYMLINK_NOFOLLOW) == 0;
     if ((existed && (!S_ISREG(original.st_mode) || requireMissing)) ||
@@ -275,9 +292,17 @@ bool writeAtomically(const std::string& path, const std::vector<uint8_t>& bytes,
     if (close(tempFd) != 0) ok = false;
     bool renamed = false;
     if (ok) {
-        if (!targetUnchanged(dirFd, existed, original) ||
-            renameat(dirFd, tempName.c_str(), dirFd, kSaveName) != 0) ok = false;
-        else renamed = true;
+        if (!targetUnchanged(dirFd, existed, original)) ok = false;
+        else {
+            // Legacy migration may only install into an absent destination,
+            // including when a noncooperating writer creates it at this instant.
+            const int result = requireMissing
+                ? static_cast<int>(syscall(SYS_renameat2, dirFd, tempName.c_str(), dirFd, kSaveName,
+                                           RENAME_NOREPLACE))
+                : renameat(dirFd, tempName.c_str(), dirFd, kSaveName);
+            if (result != 0) ok = false;
+            else renamed = true;
+        }
     }
     if (renamed && fsync(dirFd) != 0) ok = false;
     if (renamed) outcome = ok ? SaveEngine::SaveOutcome::SUCCESS :

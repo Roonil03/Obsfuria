@@ -63,8 +63,8 @@ is absolute, otherwise to `~/.local/share/obsfuria/save.bin`. Selecting Continue
 migrates a recognized legacy `./save.bin` when the current save is missing.
 Saves use fixed, versioned fields. CRC detects accidental changes; XOR only
 obfuscates bytes. Neither encrypts or authenticates save data.
-Existing version-1 saves migrate when loaded. Concurrent writers publish
-complete files atomically. If the game detects that another writer changed
+Existing version-1 saves migrate when loaded. Game instances lock the save directory while replacing or deleting saves.
+The lock coordinates processes that follow the same convention. If the game detects that another writer changed
 the destination during a save, it offers a retry. The last successful rename wins. If a directory
 sync fails after rename, the save is installed but its durability is uncertain.
 
