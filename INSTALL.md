@@ -73,3 +73,31 @@ sync fails after rename, the save is installed but its durability is uncertain.
 - `nasm: command not found`: Install nasm package (for example, `apt install nasm` on Debian or Ubuntu)
 - Game won't start: Requires interactive TTY (not suitable for CI/headless)
 - Save not found after install: Run from same user, saves are per-user in XDG dirs
+
+## Distributing a release
+
+Run `make release` to create `bin/Obsfuria.release`. GNU strip removes the
+static symbol table and debug information from this separate executable. Run
+it directly with `./bin/Obsfuria.release`. The game uses C++17, a C11 maze
+module, and the x86-64 NASM hash and save routines. The build requires a C
+compiler in addition to the normal development dependencies.
+
+For encrypted distribution, import the recipient's OpenPGP public key into
+your GnuPG keyring and verify its full fingerprint with the recipient. Then run:
+
+```bash
+make encrypted-release RECIPIENT=FULL_PUBLIC_KEY_FINGERPRINT
+```
+
+Send the resulting `bin/Obsfuria.release.FINGERPRINT.gpg` file. On the recipient's
+Linux machine, decrypt with the matching private key and launch from a terminal:
+
+```bash
+gpg --output Obsfuria --decrypt Obsfuria.release.FINGERPRINT.gpg &&
+chmod 755 Obsfuria &&
+./Obsfuria
+```
+
+Encryption protects the distribution copy until decryption. The recipient
+can inspect the runnable machine code. Stripping removes descriptive symbols
+but does not hide instructions, game strings, or required dynamic imports.
