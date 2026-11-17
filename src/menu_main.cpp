@@ -1,5 +1,6 @@
 #include "menu_main.hpp"
 #include "terminal.hpp"
+#include "terminal_text.hpp"
 #include "ui_renderer.hpp"
 #include "save_engine.hpp"
 #include "command_config.hpp"
@@ -8,38 +9,61 @@
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
+#include <sys/ioctl.h>
+#include <unistd.h>
 
-static bool readLineOrEscape(std::string& value, bool escapeCancels = true) {
+static bool readLineOrEscape(std::string& value, const std::string& prompt) {
     value.clear();
+    const auto redraw = [&] {
+        winsize window{};
+        const std::size_t columns = ioctl(STDOUT_FILENO, TIOCGWINSZ, &window) == 0 && window.ws_col
+            ? window.ws_col : 80;
+        // A byte budget is conservative for UTF-8 column widths. Keep input on
+        // one row, showing its tail when a long command would otherwise wrap.
+        const std::size_t budget = columns - 1;
+        const std::string label = prompt.substr(0, budget > 8 ? budget - 8 : budget / 2);
+        std::size_t available = budget - label.size();
+        std::string display = CommandConfig::escapeForDisplay(value);
+        std::string more;
+        if (display.size() > available) {
+            if (available >= 3) { more = "..."; available -= 3; }
+            std::size_t start = display.size() - available;
+            while (start < display.size() && (static_cast<unsigned char>(display[start]) & 0xc0) == 0x80) ++start;
+            display.erase(0, start);
+        }
+        std::cout << "\r\x1b[K" << label << more << display << std::flush;
+    };
+    redraw();
     while (true) {
         const int key = Terminal::readKey();
         if (key < 0) return false;
-        if (key == Terminal::ESC) {
-            if (escapeCancels) return false;
-            continue;
-        }
+        if (key == Terminal::ESC) return false;
         if (key == Terminal::ENTER || key == '\n') {
             std::cout << "\r\n";
             return true;
         }
         if (key == 8 || key == 127) {
             if (!value.empty()) {
-                value.pop_back();
-                std::cout << "\b \b";
+                TerminalText::popCharacter(value);
+                redraw();
             }
             continue;
         }
         if (key >= 32 && key <= 255) {
             value.push_back(static_cast<char>(key));
-            std::cout << static_cast<char>(key);
+            redraw();
         }
     }
 }
 
 static std::string clickableUserListPath() {
     namespace fs = std::filesystem;
-    const fs::path absolute = fs::absolute(CommandConfig::getUserListPath()).lexically_normal();
-    const fs::path relative = absolute.lexically_relative(fs::current_path());
+    const fs::path userPath = CommandConfig::getUserListPath();
+    std::error_code error;
+    const fs::path absolute = fs::absolute(userPath, error).lexically_normal();
+    if (error) return CommandConfig::escapeForDisplay(userPath.string());
+    const fs::path workingDirectory = fs::current_path(error);
+    const fs::path relative = error ? fs::path{} : absolute.lexically_relative(workingDirectory);
     const std::string label = CommandConfig::escapeForDisplay((relative.empty() ? absolute : relative).string());
 
     std::ostringstream uri;
@@ -55,6 +79,21 @@ static std::string clickableUserListPath() {
         }
     }
     return "\x1b]8;;" + uri.str() + "\x1b\\" + label + "\x1b]8;;\x1b\\";
+}
+
+static bool loadEditableCommands(std::vector<CommandEntry>& commands) {
+    const auto outcome = CommandConfig::loadCommands(CommandConfig::getUserListPath(), commands);
+    if (outcome == CommandConfig::LoadOutcome::MISSING) {
+        commands = CommandConfig::getDefaultCommands();
+    } else if (outcome != CommandConfig::LoadOutcome::OK) {
+        std::cout << (outcome == CommandConfig::LoadOutcome::INVALID
+            ? "User List contains malformed entries; the file was not changed. "
+            : "User List is inaccessible; the file was not changed. ");
+        std::cout << "Press any key to return...\r\n";
+        Terminal::readKey();
+        return false;
+    }
+    return true;
 }
 
 MenuMain::Difficulty MenuMain::displayMenu() {
@@ -138,8 +177,13 @@ void MenuMain::displayChangeCommands() {
                       << (CommandConfig::getActiveList() == CommandConfig::List::SAFE ? "Safe List" : "User List")
                       << "\r\n";
             std::cout << "Editable user list: " << clickableUserListPath() << "\r\n";
-            const auto userCommands = CommandConfig::loadCommands(CommandConfig::getUserListPath());
-            std::cout << "User commands: " << userCommands.size() << "\r\n\r\n";
+            std::vector<CommandEntry> userCommands;
+            const auto userOutcome = CommandConfig::loadCommands(CommandConfig::getUserListPath(), userCommands);
+            std::cout << "User commands: ";
+            if (userOutcome == CommandConfig::LoadOutcome::INVALID) std::cout << "malformed file";
+            else if (userOutcome == CommandConfig::LoadOutcome::INACCESSIBLE) std::cout << "inaccessible file";
+            else std::cout << userCommands.size();
+            std::cout << "\r\n\r\n";
             std::cout << "\r\n";
             UIRenderer::renderMenu("COMMAND LIST OPTIONS", opts, selected);
             
@@ -168,10 +212,11 @@ void MenuMain::displayChangeCommands() {
                     Terminal::readKey();
                     return;
                 } else if (selected == 1) { // User List
-                    const auto cmds = CommandConfig::loadCommands(CommandConfig::getUserListPath());
-                    if (cmds.empty()) {
+                    std::vector<CommandEntry> cmds;
+                    const auto outcome = CommandConfig::loadCommands(CommandConfig::getUserListPath(), cmds);
+                    if (outcome != CommandConfig::LoadOutcome::OK || cmds.empty()) {
                         Terminal::clearScreen();
-                        std::cout << "\x1b[31mUser List is empty; add or import commands before selecting it.\x1b[0m\r\n";
+                        std::cout << "\x1b[31mUser List must be readable and contain valid commands before selecting it.\x1b[0m\r\n";
                         std::cout << "Editable user list: " << clickableUserListPath() << "\r\n";
                         std::cout << "Press any key to continue...\r\n";
                         Terminal::readKey();
@@ -189,12 +234,12 @@ void MenuMain::displayChangeCommands() {
                 } else if (selected == 2) { // Import Custom File
                     Terminal::clearScreen();
                     std::cout << "Enter path to custom command file (format: name|command per line):\r\n";
-                    std::cout << "> ";
                     std::string path;
-                    if (!readLineOrEscape(path)) break;
+                    if (!readLineOrEscape(path, "> ")) break;
                     if (!path.empty()) {
-                        auto cmds = CommandConfig::loadCommands(path);
-                        if (!cmds.empty()) {
+                        std::vector<CommandEntry> cmds;
+                        const auto outcome = CommandConfig::loadCommands(path, cmds);
+                        if (outcome == CommandConfig::LoadOutcome::OK && !cmds.empty()) {
                             if (CommandConfig::saveCommands(CommandConfig::getUserListPath(), cmds)) {
                                 Terminal::clearScreen();
                                 std::cout << "\x1b[32mImported " << cmds.size() << " commands into the User List.\x1b[0m\r\n";
@@ -204,7 +249,7 @@ void MenuMain::displayChangeCommands() {
                             }
                         } else {
                             Terminal::clearScreen();
-                            std::cout << "\x1b[31mNo valid commands found in file.\x1b[0m\r\n";
+                            std::cout << "\x1b[31mImport requires a readable file containing only valid entries; User List was not changed.\x1b[0m\r\n";
                         }
                     }
                     std::cout << "Press any key to continue...\r\n";
@@ -212,11 +257,7 @@ void MenuMain::displayChangeCommands() {
                     break;
                 } else if (selected == 3) { // Edit Current List
                     std::vector<CommandEntry> cmds;
-                    if (exists(CommandConfig::getUserListPath())) {
-                        cmds = CommandConfig::loadCommands(CommandConfig::getUserListPath());
-                    } else {
-                        cmds = CommandConfig::getDefaultCommands();
-                    }
+                    if (!loadEditableCommands(cmds)) break;
 
                     bool changed = false;
                     bool canceled = false;
@@ -227,9 +268,9 @@ void MenuMain::displayChangeCommands() {
                             std::cout << (i + 1) << ") " << CommandConfig::escapeForDisplay(cmds[i].name) << " | "
                                       << CommandConfig::escapeForDisplay(cmds[i].executeCmd) << "\r\n";
                         }
-                        std::cout << "\r\nEnter a command number to edit, or 0 to finish: ";
+                        std::cout << "\r\n";
                         std::string choice;
-                        if (!readLineOrEscape(choice)) {
+                        if (!readLineOrEscape(choice, "Enter a command number to edit, or 0 to finish: ")) {
                             canceled = true;
                             break;
                         }
@@ -249,15 +290,13 @@ void MenuMain::displayChangeCommands() {
                             continue;
                         }
 
-                        std::cout << "New name: ";
                         std::string name;
-                        if (!readLineOrEscape(name)) {
+                        if (!readLineOrEscape(name, "New name: ")) {
                             canceled = true;
                             break;
                         }
-                        std::cout << "New command: ";
                         std::string command;
-                        if (!readLineOrEscape(command)) {
+                        if (!readLineOrEscape(command, "New command: ")) {
                             canceled = true;
                             break;
                         }
@@ -321,26 +360,22 @@ void MenuMain::displayAddCommands() {
     
     // Load current commands
     std::vector<CommandEntry> currentCmds;
-    if (exists(CommandConfig::getUserListPath())) {
-        currentCmds = CommandConfig::loadCommands(CommandConfig::getUserListPath());
-    } else {
-        currentCmds = CommandConfig::getDefaultCommands();
-    }
+    if (!loadEditableCommands(currentCmds)) return;
     
     Terminal::clearScreen();
     std::cout << "\x1b[33m=== ADD MORE COMMANDS ===\x1b[0m\r\n";
     std::cout << "\x1b[33mNew commands will be available when you start a game.\x1b[0m\r\n";
     std::cout << "Editable user list: " << clickableUserListPath() << "\r\n";
-    std::cout << "Continue? (y/N): ";
     
     std::string answer;
-    if (!readLineOrEscape(answer, false)) return;
+    if (!readLineOrEscape(answer, "Continue? (y/N): ")) return;
     char confirm = answer.empty() ? 'n' : answer.front();
     
     if (confirm != 'y' && confirm != 'Y') {
         return;
     }
     
+    bool changed = false;
     while (true) {
         if (Terminal::inputClosed()) return;
         Terminal::clearScreen();
@@ -349,9 +384,8 @@ void MenuMain::displayAddCommands() {
         std::cout << "Format: name|command (e.g., mycmd|echo hello)\r\n";
         std::cout << "Enter empty name to finish.\r\n\r\n";
         
-        std::cout << "Command name: ";
         std::string name;
-        if (!readLineOrEscape(name, false)) return;
+        if (!readLineOrEscape(name, "Command name: ")) return;
         
         if (name.empty()) {
             break;
@@ -362,9 +396,8 @@ void MenuMain::displayAddCommands() {
             continue;
         }
         
-        std::cout << "Command to execute: ";
         std::string cmd;
-        if (!readLineOrEscape(cmd, false)) return;
+        if (!readLineOrEscape(cmd, "Command to execute: ")) return;
         
         if (cmd.empty()) {
             std::cout << "\x1b[31mCommand cannot be empty.\x1b[0m\r\n";
@@ -390,12 +423,15 @@ void MenuMain::displayAddCommands() {
         }
         
         currentCmds.push_back({name, cmd});
+        changed = true;
         std::cout << "\x1b[32mAdded: " << CommandConfig::escapeForDisplay(name) << " | "
                   << CommandConfig::escapeForDisplay(cmd) << "\x1b[0m\r\n";
         std::cout << "Press any key to continue...\r\n";
         Terminal::readKey();
     }
     
+    if (!changed) return;
+
     if (currentCmds.empty()) {
         Terminal::clearScreen();
         std::cout << "\x1b[31mNo commands to save.\x1b[0m\r\n";

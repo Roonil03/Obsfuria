@@ -1,10 +1,10 @@
 # Installation Instructions
 
 ## Prerequisites
-- `g++` (C++17 support, GCC 9+ or Clang 10+)
+- x86-64 Linux and a C++17 compiler (the Makefile defaults to `g++`)
 - `nasm` (Netwide Assembler, 2.14+)
 - `make` (GNU Make)
-- Optional: `x-terminal-emulator` / `xterm` / `gnome-terminal` (for crash simulation), `tree`, `cowsay`, `fortune` (for full command arsenal)
+- An interactive terminal for playing
 
 ## Quick Start (Development)
 ```bash
@@ -40,7 +40,8 @@ the files installed by this project.
 ## Command Arsenal Configuration
 The game provides a curated **Safe List** with fixed mock output and an editable **User List**. The
 User List contains `name|command` entries and supports adding commands or
-importing a file from the in-game menu.
+importing a file from the in-game menu. Command files may contain up to 1 MiB.
+An unreadable or malformed file must be corrected before editing it in the menu.
 
 Commands in a user-provided list can perform actions allowed to your user
 account when the game captures their output. Only add commands you trust.
@@ -57,16 +58,46 @@ menu displays its current path as a clickable terminal link. Build generation
 uses the bundled default command data, not a user-provided list.
 
 ## Save Files
-Game state saves to the XDG path: `~/.local/share/obsfuria/save.bin`
-Legacy `./save.bin` auto-migrates on first run.
+The game saves to `$XDG_DATA_HOME/obsfuria/save.bin` when the data directory
+is absolute, otherwise to `~/.local/share/obsfuria/save.bin`. Selecting Continue
+migrates a recognized legacy `./save.bin` when the current save is missing.
 Saves use fixed, versioned fields. CRC detects accidental changes; XOR only
 obfuscates bytes. Neither encrypts or authenticates save data.
-Existing version-1 saves migrate when loaded. Concurrent writers publish
-complete files atomically; the last successful rename wins. If a directory
+Existing version-1 saves migrate when loaded. Game instances lock the save directory while replacing or deleting saves.
+The lock coordinates processes that follow the same convention. If the game detects that another writer changed
+the destination during a save, it offers a retry. The last successful rename wins. If a directory
 sync fails after rename, the save is installed but its durability is uncertain.
 
 ## Troubleshooting
 - `make` fails with `arsenal.hpp not found`: Run `bash ./scripts/add_commands.sh` first
-- `nasm: command not found`: Install nasm package (`apt install nasm` / `brew install nasm`)
+- `nasm: command not found`: Install nasm package (for example, `apt install nasm` on Debian or Ubuntu)
 - Game won't start: Requires interactive TTY (not suitable for CI/headless)
 - Save not found after install: Run from same user, saves are per-user in XDG dirs
+
+## Distributing a release
+
+Run `make release` to create `bin/Obsfuria.release`. GNU strip removes the
+static symbol table and debug information from this separate executable. Run
+it directly with `./bin/Obsfuria.release`. The game uses C++17, a C11 maze
+module, and the x86-64 NASM hash and save routines. The build requires a C
+compiler in addition to the normal development dependencies.
+
+For encrypted distribution, import the recipient's OpenPGP public key into
+your GnuPG keyring and verify its full fingerprint with the recipient. Then run:
+
+```bash
+make encrypted-release RECIPIENT=FULL_PUBLIC_KEY_FINGERPRINT
+```
+
+Send the resulting `bin/Obsfuria.release.FINGERPRINT.gpg` file. On the recipient's
+Linux machine, decrypt with the matching private key and launch from a terminal:
+
+```bash
+gpg --output Obsfuria --decrypt Obsfuria.release.FINGERPRINT.gpg &&
+chmod 755 Obsfuria &&
+./Obsfuria
+```
+
+Encryption protects the distribution copy until decryption. The recipient
+can inspect the runnable machine code. Stripping removes descriptive symbols
+but does not hide instructions, game strings, or required dynamic imports.

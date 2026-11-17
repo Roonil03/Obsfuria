@@ -47,6 +47,11 @@ void GameLoop::start(MenuMain::Difficulty diff) {
             Terminal::readKey();
             return;
         }
+        if (SaveEngine::lastLoadOutcome() == SaveEngine::LoadOutcome::LOADED_DURABILITY_UNCERTAIN) {
+            Terminal::clearScreen();
+            std::cout << "Save migrated, but storage durability is uncertain. Press any key to continue.\r\n";
+            Terminal::readKey();
+        }
     }
     
     if (diff == MenuMain::Difficulty::EASY) {
@@ -70,7 +75,8 @@ void GameLoop::start(MenuMain::Difficulty diff) {
     // missing or empty user list.
     std::map<std::string, std::string> commands;
     const auto activeList = CommandConfig::getActiveList();
-    const auto configuredCommands = CommandConfig::loadActiveCommands();
+    const auto configuredCommands = activeList == CommandConfig::List::USER
+        ? CommandConfig::loadCommands(CommandConfig::getUserListPath()) : CommandConfig::getDefaultCommands();
     if (activeList == CommandConfig::List::SAFE) {
         for (const auto& entry : configuredCommands) {
             commands.emplace(entry.name, "Obsfuria node active\n");

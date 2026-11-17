@@ -4,7 +4,7 @@
 #include <termios.h>
 
 /*
- * Provides raw terminal I/O, ANSI control, and non-blocking key reads.
+ * Provides raw terminal I/O, ANSI control, and blocking key reads.
  */
 class Terminal {
 private:
@@ -15,7 +15,7 @@ public:
     /*
      * Enables raw terminal mode.
      */
-    static void enableRawMode();
+    static bool enableRawMode();
     
     /*
      * Restores the original terminal mode.

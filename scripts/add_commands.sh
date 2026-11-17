@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -o pipefail
+set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 OUT_DIR="$SCRIPT_DIR/../include"
@@ -88,6 +88,6 @@ cat <<'EOF' >> "$TMP_FILE"
 #endif
 EOF
 
-mv -- "$TMP_FILE" "$OUT_FILE"
+mv -T -- "$TMP_FILE" "$OUT_FILE"
 trap - EXIT
 echo "Success! $OUT_FILE generated successfully."

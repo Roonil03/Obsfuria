@@ -14,6 +14,7 @@ bool MenuPause::displayPause() {
         
         int key = Terminal::readKey();
         if (key < 0) return false;
+        if (key == Terminal::ESC || key == 'p' || key == 'P') return true;
         if (key == Terminal::ARROW_UP) {
             selected = (selected - 1 + opts.size()) % opts.size();
         } else if (key == Terminal::ARROW_DOWN) {
