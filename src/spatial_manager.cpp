@@ -1,14 +1,13 @@
 #include "spatial_manager.hpp"
+#include "spatial_hash.h"
 #include <cstddef>
 
 extern "C" {
-    unsigned int safe_nasm_spatial_hash(int x, int y, unsigned int tableSize);
     void nasm_xor_encrypt_decrypt(uint8_t* buffer, std::size_t len, uint8_t key);
 }
 
 unsigned int SpatialManager::calculateHash(int x, int y, unsigned int tableSize) {
-    if (tableSize == 0) return 0;
-    return safe_nasm_spatial_hash(x, y, tableSize);
+    return obsfuria_spatial_hash(x, y, tableSize);
 }
 
 void SpatialManager::applyCrypto(std::vector<uint8_t>& buffer, uint8_t key) {
@@ -16,12 +15,6 @@ void SpatialManager::applyCrypto(std::vector<uint8_t>& buffer, uint8_t key) {
     nasm_xor_encrypt_decrypt(buffer.data(), buffer.size(), key);
 }
 
-/*
- * A wall exists if the hash mod 5 is 0. But we always leave 0,0 clear.
- */
 bool SpatialManager::isWall(int x, int y) {
-    if (x == 0 && y == 0) return false;
-    // Bound the maze size conceptually
-    if (x < 0 || y < 0 || x >= 20 || y >= 20) return true; // borders
-    return (calculateHash(x, y, 1024) % 5) == 0;
+    return obsfuria_is_wall(x, y) != 0;
 }
