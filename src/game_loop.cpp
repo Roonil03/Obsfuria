@@ -12,9 +12,27 @@
 #include <iostream>
 #include <string>
 #include <cstddef>
+#include <map>
 #include <random>
+#include <utility>
+#include <vector>
 
 namespace {
+using CommandMap = std::map<std::string, std::string>;
+
+CommandMap loadSessionCommands(CommandConfig::List list) {
+    if (list == CommandConfig::List::USER) {
+        auto entries = CommandConfig::loadCommands(CommandConfig::getUserListPath());
+        if (entries.empty()) return {};
+        return CommandConfig::buildEncounterArsenalMap(std::move(entries));
+    }
+    CommandMap commands;
+    for (auto& entry : CommandConfig::getDefaultCommands()) {
+        commands.emplace(std::move(entry.name), "Obsfuria node active\n");
+    }
+    return commands;
+}
+
 bool saveOrQuit(const GameState& state) {
     while (true) {
         if (SaveEngine::saveState(state)) return true;
@@ -70,25 +88,16 @@ void GameLoop::start(MenuMain::Difficulty diff) {
     
     std::random_device rd;
     std::mt19937 gen(rd());
-    // Resolve the selected list for every game start so edits made between
-    // runs are picked up. The compiled arsenal remains a fallback for a
-    // missing or empty user list.
-    std::map<std::string, std::string> commands;
-    const auto activeList = CommandConfig::getActiveList();
-    const auto configuredCommands = activeList == CommandConfig::List::USER
-        ? CommandConfig::loadCommands(CommandConfig::getUserListPath()) : CommandConfig::getDefaultCommands();
-    if (activeList == CommandConfig::List::SAFE) {
-        for (const auto& entry : configuredCommands) {
-            commands.emplace(entry.name, "Obsfuria node active\n");
-        }
-    } else if (!configuredCommands.empty()) {
-        // Capture the configured commands' output for encounters, matching
-        // the compiled mock arsenal's name -> captured output shape.
-        commands = CommandConfig::buildArsenalMap(configuredCommands);
-    } else {
-        commands = Arsenal::getMockCommands();
+    const auto list = CommandConfig::getActiveList();
+    const auto sessionCommands = loadSessionCommands(list);
+    const auto& commands = list == CommandConfig::List::USER && sessionCommands.empty()
+        ? Arsenal::getMockCommands() : sessionCommands;
+    // Both maps outlive the index. Sampling only needs a pointer per command.
+    std::vector<const CommandMap::value_type*> enemyPool;
+    enemyPool.reserve(commands.size());
+    for (const auto& entry : commands) {
+        if (entry.first != "obsfuria_version") enemyPool.push_back(&entry);
     }
-    commands.erase("obsfuria_version");
 
     // Pacing is local to this exploration session; saves keep their existing format.
     bool hunting = false;
@@ -164,32 +173,25 @@ void GameLoop::start(MenuMain::Difficulty diff) {
                 int enemyDef = StatCalc::generateStat(static_cast<int>((1 + (distance / 15)) * diffMult), 0, 999);
                 int enemyRun = StatCalc::generateStat(static_cast<int>((20 + (distance / 5)) * diffMult), 1, 99);
                 
-                std::string enemyName = "Unknown Command";
-                std::string enemyOutput;
-                if (!commands.empty()) {
-                    std::uniform_int_distribution<size_t> dist(0, commands.size() - 1);
-                    auto it = commands.begin();
-                    std::advance(it, dist(gen));
-                    enemyName = it->first;
-                    enemyOutput = it->second;
-                }
-                std::uniform_int_distribution<int> crashDist(1, 10);
-                if (crashDist(gen) == 1) {
-                    enemyName = "Segmentation Fault";
-                    enemyOutput = "Segmentation fault (core dumped)";
-                }
-                
                 Combatant player = {"Player", state.hp, state.maxHp, state.atk, state.def, state.chanceToRun, {}};
-                Combatant enemy = {enemyName, enemyHp, enemyHp, enemyAtk, enemyDef, enemyRun, {}};
-                enemy.output = enemyOutput;
-                
+                Combatant enemy = {"Unknown Command", enemyHp, enemyHp, enemyAtk, enemyDef, enemyRun, {}};
+                if (std::uniform_int_distribution<int>(1, 10)(gen) == 1) {
+                    enemy.name = "Segmentation Fault";
+                    enemy.output = "Segmentation fault (core dumped)";
+                } else if (!enemyPool.empty()) {
+                    std::uniform_int_distribution<std::size_t> pick(0, enemyPool.size() - 1);
+                    const auto& entry = *enemyPool[pick(gen)];
+                    enemy.name = entry.first;
+                    enemy.output = entry.second;
+                }
+
                 bool survived = BattleLoop::startBattle(player, enemy);
                 
                 if (survived) {
                     clearMoves = 3;
                     if (enemy.hp <= 0) {
                         RewardSystem::stealStat(player, enemy, state.difficulty);
-                    } else {
+                    } else if (!Terminal::inputClosed()) {
                         Terminal::clearScreen();
                         std::cout << "\x1b[33mYou successfully escaped!\x1b[0m\r\n";
                         std::cout << "Press any key to continue...\r\n";
