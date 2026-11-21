@@ -49,8 +49,15 @@ Capture uses `/bin/sh -c`, with a one-second limit per command, a 40-second
 session budget, 16 KiB of output and 25 lines per command. These limits and
 I/O redirection are not a sandbox for hostile shell commands.
 Encounters display captured output and do not run commands during combat.
+The game retains a battle preview of up to six lines of 100 raw bytes each per
+command, plus any status or truncation message. Capture continues to the
+execution limits above even when the preview is full.
 
 In-game: `Main Menu → Reload Enemy Commands` lets you choose the Safe List or User List. The User List can be edited, extended, or imported from that menu, and the main-menu **Add More Commands** option also edits it. Selecting a list persists across launches and reloads the enemy pool for the next game. Choosing a list does not run its commands.
+
+In **Add More Commands**, enter the name and shell command at their separate
+prompts. Press Enter at an empty name to save the entries you added. Press
+Escape while editing to discard the pending additions and return to the menu.
 
 The editable user list is `$XDG_CONFIG_HOME/obsfuria/commands.conf` when
 `XDG_CONFIG_HOME` is set, otherwise `~/.config/obsfuria/commands.conf`. The

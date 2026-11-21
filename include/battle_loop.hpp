@@ -17,7 +17,8 @@ class BattleLoop {
 public:
     /*
      * Engages the interactive battle loop with the terminal.
-     * Returns true if player won/escaped, false if player died.
+     * Returns false if the player died; true for victory, escape or closed input.
+     * On closed input, callers can check Terminal::inputClosed() before rewards.
      */
     static bool startBattle(Combatant& player, Combatant& enemy);
 };
