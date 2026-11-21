@@ -91,6 +91,9 @@ void Terminal::disableRawMode() {
  * Reads a single keystroke, interpreting ANSI escapes for arrows.
  */
 int Terminal::readKey() {
+    // POSIX read() does not flush C++ output as std::cin would. Make prompts
+    // visible before waiting, even when stdout is fully buffered.
+    std::cout.flush();
     if (inputClosed()) return -1;
     const int c = readByte(-1);
     if (c < 0) return -1;

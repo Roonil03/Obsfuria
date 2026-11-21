@@ -36,6 +36,9 @@ public:
     static std::string escapeForDisplay(const std::string& value);
     
     static std::map<std::string, std::string> buildArsenalMap(const std::vector<CommandEntry>& commands);
+    // Consume the session's command entries and retain only a bounded raw
+    // preview for encounters. Command execution limits match buildArsenalMap.
+    static std::map<std::string, std::string> buildEncounterArsenalMap(std::vector<CommandEntry> commands);
 };
 
 #endif // COMMAND_CONFIG_HPP

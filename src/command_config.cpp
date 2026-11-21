@@ -146,12 +146,18 @@ bool replaceConfig(const fs::path& path, const std::string& contents) {
 struct CaptureResult {
     std::string output;
     enum class Status { OK, FAILED, TIMED_OUT, LIMITED } status = Status::FAILED;
+    bool previewTruncated = false;
 };
 
 CaptureResult captureCommand(const std::string& command,
-                           std::chrono::steady_clock::time_point deadline) {
+                           std::chrono::steady_clock::time_point deadline,
+                           bool encounterPreview) {
     constexpr size_t maxBytes = 16 * 1024;
     constexpr size_t maxLines = 25;
+    // The encounter renderer shows six lines and at most 100 escaped bytes
+    // per line. Every retained raw byte occupies at least one escaped byte.
+    constexpr size_t maxPreviewLines = 6;
+    constexpr size_t maxPreviewLineBytes = 100;
     int pipeFds[2];
     if (pipe2(pipeFds, O_CLOEXEC) != 0) return {};
     // Keep pipe ends away from stdio even if a caller closed stdin/stdout.
@@ -193,7 +199,10 @@ CaptureResult captureCommand(const std::string& command,
         fcntl(pipeFds[0], F_SETFL, oldFlags | O_NONBLOCK) >= 0;
 
     std::string output;
+    size_t bytes = 0;
     size_t lines = 0;
+    size_t previewLineLength = 0;
+    bool previewTruncated = false;
     bool pipeClosed = false;
     bool childExited = false;
     bool hitLimit = false;
@@ -216,15 +225,30 @@ CaptureResult captureCommand(const std::string& command,
                     else if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) captureFailed = true;
                     break;
                 }
-                for (ssize_t i = 0; i < count && output.size() < maxBytes; ++i) {
+                for (ssize_t i = 0; i < count && bytes < maxBytes; ++i) {
                     const char c = buffer[i];
-                    output += c;
+                    ++bytes;
+                    // Keep draining after the visible preview fills up. Its
+                    // size must not change when a command is stopped or hide
+                    // its eventual exit status/timeout.
+                    if (!encounterPreview) {
+                        output += c;
+                    } else if (!previewTruncated) {
+                        if (lines >= maxPreviewLines ||
+                            (c != '\n' && previewLineLength >= maxPreviewLineBytes)) {
+                            previewTruncated = true;
+                        } else {
+                            output += c;
+                            if (c == '\n') previewLineLength = 0;
+                            else ++previewLineLength;
+                        }
+                    }
                     if (c == '\n' && ++lines >= maxLines) {
                         hitLimit = true;
                         break;
                     }
                 }
-                if (output.size() >= maxBytes || hitLimit) {
+                if (bytes >= maxBytes || hitLimit) {
                     hitLimit = true;
                     break;
                 }
@@ -248,6 +272,7 @@ CaptureResult captureCommand(const std::string& command,
     do { reaped = waitpid(child, &status, 0); } while (reaped < 0 && errno == EINTR);
     CaptureResult result;
     result.output = std::move(output);
+    result.previewTruncated = previewTruncated;
     if (captureFailed || reaped != child) {
         result.status = CaptureResult::Status::FAILED;
     } else if (std::chrono::steady_clock::now() >= deadline && !hitLimit) {
@@ -388,15 +413,17 @@ std::vector<CommandEntry> CommandConfig::getCrazyCommands() {
     return loadCommands(getCrazyAssetPath());
 }
 
-std::map<std::string, std::string> CommandConfig::buildArsenalMap(const std::vector<CommandEntry>& commands) {
+namespace {
+template <typename Entries>
+std::map<std::string, std::string> buildCapturedArsenal(Entries& commands, bool encounterPreview) {
     std::map<std::string, std::string> arsenal;
     const auto totalDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(40);
-    for (const auto& e : commands) {
+    for (auto& e : commands) {
         if (!validEntry(e)) continue;
         const auto commandDeadline = std::min(totalDeadline,
             std::chrono::steady_clock::now() + std::chrono::seconds(1));
         CaptureResult captured = std::chrono::steady_clock::now() < totalDeadline
-            ? captureCommand(e.executeCmd, commandDeadline)
+            ? captureCommand(e.executeCmd, commandDeadline, encounterPreview)
             : CaptureResult{{}, CaptureResult::Status::TIMED_OUT};
         std::string output = std::move(captured.output);
         std::string notice;
@@ -404,8 +431,16 @@ std::map<std::string, std::string> CommandConfig::buildArsenalMap(const std::vec
         else if (captured.status == CaptureResult::Status::LIMITED) notice = "[output limit reached]";
         else if (captured.status == CaptureResult::Status::FAILED) notice = "[command failed]";
         else if (output.empty()) output = "[command produced no output]";
-        // Leave room for status so truncation never hides a failure/limit.
-        if (!notice.empty()) {
+        if (encounterPreview) {
+            if (captured.previewTruncated) {
+                if (!output.empty() && output.back() != '\n') output += '\n';
+                output += "[output truncated]";
+            }
+            // Escaping a long first line can fill the renderer's preview;
+            // report execution status before that preview so it stays visible.
+            if (!notice.empty()) output.insert(0, notice + '\n');
+        } else if (!notice.empty()) {
+            // Preserve the full/raw API's original status placement.
             size_t lines = 0;
             for (size_t index = 0; index < output.size(); ++index) {
                 if (output[index] == '\n' && ++lines == 24) {
@@ -416,8 +451,17 @@ std::map<std::string, std::string> CommandConfig::buildArsenalMap(const std::vec
             if (!output.empty() && output.back() != '\n') output += '\n';
             output += notice;
         }
-        arsenal[e.name] = std::move(output);
+        arsenal[std::move(e.name)] = std::move(output);
     }
     arsenal["obsfuria_version"] = "1.0.0";
     return arsenal;
+}
+}
+
+std::map<std::string, std::string> CommandConfig::buildArsenalMap(const std::vector<CommandEntry>& commands) {
+    return buildCapturedArsenal(commands, false);
+}
+
+std::map<std::string, std::string> CommandConfig::buildEncounterArsenalMap(std::vector<CommandEntry> commands) {
+    return buildCapturedArsenal(commands, true);
 }
