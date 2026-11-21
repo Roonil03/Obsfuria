@@ -89,11 +89,20 @@ void GameLoop::start(MenuMain::Difficulty diff) {
         commands = Arsenal::getMockCommands();
     }
     commands.erase("obsfuria_version");
+
+    // Pacing is local to this exploration session; saves keep their existing format.
+    bool hunting = false;
+    int clearMoves = 0;
     
     while (true) {
         Terminal::clearScreen();
         std::cout << "--- MAZE EXPLORATION ---\r\n";
-        std::cout << "WASD to move, P or Q to pause/save.\r\n";
+        std::cout << "WASD to move, P/ESC to pause, Q to save and quit.\r\n";
+        std::cout << "C to change pace: "
+                  << (hunting ? "HUNT (25% per move; more stat-steal chances and HP risk)"
+                               : "NORMAL (10% per move)") << "\r\n";
+        std::cout << "After each fight: 3 clear moves. Protection left: " << clearMoves
+                  << " move(s). Pace resets to Normal when loading.\r\n";
         std::cout << "Player Stats -> HP: " << state.hp << "/" << state.maxHp  
                   << " | ATK: " << state.atk << " | DEF: " << state.def << "\r\n";
         
@@ -118,6 +127,10 @@ void GameLoop::start(MenuMain::Difficulty diff) {
         else if (key == 's' || key == 'S') ny++;
         else if (key == 'a' || key == 'A') nx--;
         else if (key == 'd' || key == 'D') nx++;
+        else if (key == 'c' || key == 'C') {
+            hunting = !hunting;
+            continue;
+        }
         else if (key == 'p' || key == 'P' || key == Terminal::ESC) {
             bool resume = MenuPause::displayPause();
             if (!resume) {
@@ -134,9 +147,15 @@ void GameLoop::start(MenuMain::Difficulty diff) {
             
             state.x = nx;
             state.y = ny;
+
+            if (!moved) continue;
+            if (clearMoves > 0) {
+                --clearMoves;
+                continue;
+            }
             
             std::uniform_int_distribution<> encounterDist(1, 100);
-            if (moved && encounterDist(gen) <= 10) {
+            if (encounterDist(gen) <= (hunting ? 25 : 10)) {
                 int distance = std::abs(nx) + std::abs(ny);
                 double diffMult = (state.difficulty == Difficulty::HARD) ? 1.5 : 1.0;
                 
@@ -167,6 +186,7 @@ void GameLoop::start(MenuMain::Difficulty diff) {
                 bool survived = BattleLoop::startBattle(player, enemy);
                 
                 if (survived) {
+                    clearMoves = 3;
                     if (enemy.hp <= 0) {
                         RewardSystem::stealStat(player, enemy, state.difficulty);
                     } else {
