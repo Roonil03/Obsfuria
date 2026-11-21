@@ -52,6 +52,10 @@ Encounters display captured output and do not run commands during combat.
 
 In-game: `Main Menu → Reload Enemy Commands` lets you choose the Safe List or User List. The User List can be edited, extended, or imported from that menu, and the main-menu **Add More Commands** option also edits it. Selecting a list persists across launches and reloads the enemy pool for the next game. Choosing a list does not run its commands.
 
+In **Add More Commands**, enter the name and shell command at their separate
+prompts. Press Enter at an empty name to save the entries you added. Press
+Escape while editing to discard the pending additions and return to the menu.
+
 The editable user list is `$XDG_CONFIG_HOME/obsfuria/commands.conf` when
 `XDG_CONFIG_HOME` is set, otherwise `~/.config/obsfuria/commands.conf`. The
 menu displays its current path as a clickable terminal link. Build generation
