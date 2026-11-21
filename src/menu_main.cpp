@@ -9,6 +9,8 @@
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
+#include <chrono>
+#include <poll.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 
@@ -23,35 +25,63 @@ static bool readLineOrEscape(std::string& value, const std::string& prompt) {
         const std::size_t budget = columns - 1;
         const std::string label = prompt.substr(0, budget > 8 ? budget - 8 : budget / 2);
         std::size_t available = budget - label.size();
-        std::string display = CommandConfig::escapeForDisplay(value);
+        // Escape only the visible tail. Escaping the entire accumulated input
+        // for every byte makes long pastes take quadratic time.
+        std::size_t tail = value.size() > available ? value.size() - available : 0;
+        if (tail > 0) {
+            while (tail < value.size() &&
+                   (static_cast<unsigned char>(value[tail]) & 0xc0) == 0x80) ++tail;
+        }
+        std::string display = CommandConfig::escapeForDisplay(value.substr(tail));
         std::string more;
-        if (display.size() > available) {
+        if (tail > 0 || display.size() > available) {
             if (available >= 3) { more = "..."; available -= 3; }
-            std::size_t start = display.size() - available;
+            std::size_t start = display.size() > available ? display.size() - available : 0;
             while (start < display.size() && (static_cast<unsigned char>(display[start]) & 0xc0) == 0x80) ++start;
             display.erase(0, start);
         }
         std::cout << "\r\x1b[K" << label << more << display << std::flush;
     };
     redraw();
+    using Clock = std::chrono::steady_clock;
+    auto lastRedraw = Clock::now();
+    bool dirty = false;
+    const auto redrawPending = [&] {
+        if (!dirty) return;
+        redraw();
+        dirty = false;
+        lastRedraw = Clock::now();
+    };
     while (true) {
+        if (dirty) {
+            pollfd input{STDIN_FILENO, POLLIN, 0};
+            // Batch queued paste bytes, but keep typing responsive and show
+            // every pending edit before the next blocking input read.
+            if (Clock::now() - lastRedraw >= std::chrono::milliseconds(16) ||
+                poll(&input, 1, 0) <= 0 || !(input.revents & POLLIN)) {
+                redrawPending();
+            }
+        }
         const int key = Terminal::readKey();
-        if (key < 0) return false;
-        if (key == Terminal::ESC) return false;
+        if (key < 0 || key == Terminal::ESC) {
+            redrawPending();
+            return false;
+        }
         if (key == Terminal::ENTER || key == '\n') {
-            std::cout << "\r\n";
+            redrawPending();
+            std::cout << "\r\n" << std::flush;
             return true;
         }
         if (key == 8 || key == 127) {
             if (!value.empty()) {
                 TerminalText::popCharacter(value);
-                redraw();
+                dirty = true;
             }
             continue;
         }
         if (key >= 32 && key <= 255) {
             value.push_back(static_cast<char>(key));
-            redraw();
+            dirty = true;
         }
     }
 }
@@ -356,33 +386,23 @@ void MenuMain::displayChangeCommands() {
 }
 
 void MenuMain::displayAddCommands() {
-    using namespace std::filesystem;
-    
     // Load current commands
     std::vector<CommandEntry> currentCmds;
     if (!loadEditableCommands(currentCmds)) return;
-    
-    Terminal::clearScreen();
-    std::cout << "\x1b[33m=== ADD MORE COMMANDS ===\x1b[0m\r\n";
-    std::cout << "\x1b[33mNew commands will be available when you start a game.\x1b[0m\r\n";
-    std::cout << "Editable user list: " << clickableUserListPath() << "\r\n";
-    
-    std::string answer;
-    if (!readLineOrEscape(answer, "Continue? (y/N): ")) return;
-    char confirm = answer.empty() ? 'n' : answer.front();
-    
-    if (confirm != 'y' && confirm != 'Y') {
-        return;
-    }
-    
+
     bool changed = false;
+    std::string status;
     while (true) {
         if (Terminal::inputClosed()) return;
         Terminal::clearScreen();
-        std::cout << "\x1b[36m--- ADD COMMAND ---\x1b[0m\r\n";
+        std::cout << "\x1b[36m=== ADD MORE COMMANDS ===\x1b[0m\r\n";
+        std::cout << "Editable user list: " << clickableUserListPath() << "\r\n";
         std::cout << "Current commands: " << currentCmds.size() << "\r\n";
-        std::cout << "Format: name|command (e.g., mycmd|echo hello)\r\n";
-        std::cout << "Enter empty name to finish.\r\n\r\n";
+        std::cout << "Enter the name and command separately, pressing Enter after each.\r\n";
+        std::cout << "Enter an empty name to save and finish. Esc cancels unsaved additions.\r\n";
+        std::cout << "New commands will be available when the User List is selected.\r\n";
+        if (!status.empty()) std::cout << status << "\r\n";
+        std::cout << "\r\n";
         
         std::string name;
         if (!readLineOrEscape(name, "Command name: ")) return;
@@ -391,8 +411,7 @@ void MenuMain::displayAddCommands() {
             break;
         }
         if (name.front() == '#' || name.find('|') != std::string::npos) {
-            std::cout << "Name cannot start with # or contain |. Press any key...\r\n";
-            Terminal::readKey();
+            status = "Name cannot start with # or contain |. Try again.";
             continue;
         }
         
@@ -400,9 +419,7 @@ void MenuMain::displayAddCommands() {
         if (!readLineOrEscape(cmd, "Command to execute: ")) return;
         
         if (cmd.empty()) {
-            std::cout << "\x1b[31mCommand cannot be empty.\x1b[0m\r\n";
-            std::cout << "Press any key to continue...\r\n";
-            Terminal::readKey();
+            status = "Command cannot be empty. Try again.";
             continue;
         }
         
@@ -416,18 +433,13 @@ void MenuMain::displayAddCommands() {
         }
         
         if (duplicate) {
-            std::cout << "\x1b[31mCommand name already exists.\x1b[0m\r\n";
-            std::cout << "Press any key to continue...\r\n";
-            Terminal::readKey();
+            status = "Command name already exists. Try again.";
             continue;
         }
         
         currentCmds.push_back({name, cmd});
         changed = true;
-        std::cout << "\x1b[32mAdded: " << CommandConfig::escapeForDisplay(name) << " | "
-                  << CommandConfig::escapeForDisplay(cmd) << "\x1b[0m\r\n";
-        std::cout << "Press any key to continue...\r\n";
-        Terminal::readKey();
+        status = "Command added. Enter another name, or press Enter to save and finish.";
     }
     
     if (!changed) return;
